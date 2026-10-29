@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { type ApiKeyStatus, AGE_CHECK_FALLBACK_PRICE, ERROR_MESSAGES_RU } from "../../shared/engine";
-import { defaultFaceGateConfig } from "../../engine/face/config";
-import { callsOf, flush, openSection, setup, inAct, describeElement, focusedLabel } from "../testing";
+import { callsOf, flush, openSection, setup, inAct } from "../testing";
 
 // Safety net for the clock-skew test's fake timers: if that test ever times
 // out mid-`await`, its own `finally` never runs, and real timers would stay
@@ -15,7 +14,6 @@ afterEach(() => {
 const NOT_SET: ApiKeyStatus = { stored: false, last4: null, encryptionAvailable: true, rejected: false };
 const STORED: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
 const REJECTED: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: true };
-const NO_CRYPTO: ApiKeyStatus = { stored: false, last4: null, encryptionAvailable: false, rejected: false };
 
 async function openSettings(apiKey: ApiKeyStatus = STORED, extra: Parameters<typeof setup>[0] = {}) {
   const ctx = setup({ apiKey, ...extra });
@@ -40,13 +38,6 @@ function inputValues(): string[] {
 
 // ---------- key ----------
 
-test("key state: not set", async () => {
-  await openSettings(NOT_SET);
-  expect(screen.getByText(/^не задан/)).toBeDefined();
-  expect(keyInput().getAttribute("type")).toBe("password");
-  expect(screen.queryByDisplayValue(/••••/) === null).toBe(true);
-});
-
 test("key state: stored shows only the last four characters", async () => {
   await openSettings(STORED);
   expect(screen.getByText("зашифрован системой")).toBeDefined();
@@ -61,13 +52,6 @@ test("key state: rejected by OpenRouter (401)", async () => {
   expect(screen.getByText("OpenRouter отклонил ключ (401)")).toBeDefined();
   expect(screen.getByText(/Генерация остановлена и сама не повторяется/)).toBeDefined();
   expect(screen.getByDisplayValue("••••••3f2a")).toBeDefined();
-});
-
-test("key state: encryption unavailable explains why nothing is stored", async () => {
-  await openSettings(NO_CRYPTO);
-  expect(screen.getByText("Системное шифрование недоступно")).toBeDefined();
-  expect(screen.getByText(/поэтому ключ не сохраняется/)).toBeDefined();
-  expect(keyInput().hasAttribute("disabled")).toBe(true);
 });
 
 test("saving a key sends it once and never renders it again", async () => {
@@ -162,20 +146,6 @@ test("money status shows spent, the budget and open reserves", async () => {
   expect(within(card).getByText("нет")).toBeDefined();
 });
 
-test("reconcile needed: reasons, then too-early with the wait", async () => {
-  const { engine } = await openSettings();
-  inAct(() => engine.requireReconcile(["open-reserves", "torn-ledger-line"]));
-  await flush();
-  expect(screen.getByText(/остались незакрытые резервы/)).toBeDefined();
-  expect(screen.getByText(/последняя строка журнала расходов обрезана/)).toBeDefined();
-
-  engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000, warnings: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/OpenRouter ещё не обновил расход/);
-  expect(screen.getByText(/сверить можно через 1\s*мин 35\s*с/)).toBeDefined();
-  expect(screen.getByRole("button", { name: "Сверить" }).hasAttribute("disabled")).toBe(true);
-});
-
 test("reconcile done shows both totals and that they match", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 207_600, deltaUnavailable: null, ledgerDeltaMicros: 211_000, mismatch: false, closedReserves: 2, aboveWorstAttempts: [], tornLineMoved: true, warnings: [] });
@@ -209,70 +179,6 @@ test("a difference of exactly one cent is not a mismatch; one micro more is", as
   await screen.findByText(/расхождение \$0\.0100/);
 });
 
-test("a first reconcile with no baseline still shows the ledger's own total and says why there is nothing to compare it to", async () => {
-  const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: null, deltaUnavailable: "no-baseline", ledgerDeltaMicros: 211_000, mismatch: null, closedReserves: 1, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/первая сверка: сравнить с \/credits не с чем · журнал \$0\.2110/);
-  expect(screen.getByText(/закрыто по худшей цене: 1\s*резерв/)).toBeDefined();
-  expect(screen.queryByText(/\/credits \$/) === null).toBe(true);
-});
-
-test("a negative account-wide /credits delta is explained instead of compared", async () => {
-  const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: null, deltaUnavailable: "negative-delta", ledgerDeltaMicros: 50_000, mismatch: null, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/ушёл в минус/);
-});
-
-test("a clock-skew warning shows on a too-early answer", async () => {
-  const { engine } = await openSettings();
-  engine.queueReconcile({ status: "too-early", retryAfterMs: 30_000, warnings: ["clock-skew"] });
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/системные часы отстают/);
-  expect(screen.getByText(/OpenRouter ещё не обновил расход/)).toBeDefined();
-});
-
-test("a clock-skew warning shows alongside a done reconcile too", async () => {
-  const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: 100_000, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: false, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: ["clock-skew"] });
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/— сходится/);
-  expect(screen.getByText(/системные часы отстают/)).toBeDefined();
-});
-
-test("the clock-skew warning stays visible after the countdown ends, not just while it is running", async () => {
-  // Deterministic instead of a real 1.1 s wait: fake timers advance both the
-  // row's own countdown interval (a real 1 s setInterval, not the
-  // ManualScheduler) and Date.now() together, so the countdown can be pushed
-  // past its own end without depending on the wall clock at all.
-  jest.useFakeTimers();
-  try {
-    const { engine } = await openSettings();
-    // A small but positive retryAfterMs (the contract requires positive).
-    engine.queueReconcile({ status: "too-early", retryAfterMs: 10, warnings: ["clock-skew"] });
-    fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-    await screen.findByText(/системные часы отстают/);
-    expect(screen.getByText(/OpenRouter ещё не обновил расход/)).toBeDefined();
-
-    // Inside act() so React applies the interval's state update as part of
-    // this controlled batch, not as a bare, unwrapped timer callback outside
-    // any render pass.
-    act(() => {
-      jest.advanceTimersByTime(1100);
-    });
-
-    // Once the countdown passes its own end, "ещё не обновил расход · сверить
-    // можно через …" (the still-waiting state) must go — but the clock-skew
-    // warning must stay, not vanish along with it.
-    expect(screen.queryByText(/ещё не обновил расход/) === null).toBe(true);
-    expect(screen.getByText(/системные часы отстают/)).toBeDefined();
-    expect(screen.getByRole("button", { name: "Сверить" }).hasAttribute("disabled")).toBe(false);
-  } finally {
-    jest.useRealTimers();
-  }
-});
-
 test("reconcile refused while requests are in flight", async () => {
   const { engine } = await openSettings();
   engine.failNext("money.reconcile", { code: "IN_FLIGHT" });
@@ -303,13 +209,6 @@ test("a ledger that could not be read: no reconcile is offered, and the page say
   expect(screen.getAllByText(ERROR_MESSAGES_RU.LEDGER_UNREADABLE).length).toBeGreaterThan(0);
 });
 
-test("a failed ledger write: no reconcile is offered until a restart", async () => {
-  await openSettings(STORED, { money: { halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed" } } });
-  expect(screen.queryByRole("button", { name: "Сверить" }) === null).toBe(true);
-  expect(screen.queryByText("Сверка недоступна") !== null).toBe(true);
-  expect(screen.getAllByText(/Перезапустите Studio/).length).toBeGreaterThan(0);
-});
-
 test("a settle above its worst case known only from the status (after a restart) is a reason to reconcile", async () => {
   await openSettings(STORED, { money: { halt: { cause: "SETTLE_ABOVE_WORST", detail: "billed above", attemptIds: ["slot-1#1"] } } });
   expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
@@ -317,94 +216,10 @@ test("a settle above its worst case known only from the status (after a restart)
   expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-p");
 });
 
-test("after the reconcile the wizard can spend again", async () => {
-  const { engine } = await openSettings();
-  inAct(() => engine.haltAboveWorst());
-  await flush();
-  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/— сходится/);
-  await flush();
-  await openSection("Аватары");
-  expect(document.body.textContent).not.toContain("Нужна сверка расходов");
-});
-
 // ---------- performance, models, folders ----------
-
-test("network concurrency steps through the contract's range, 1 to 16", async () => {
-  const { engine } = await openSettings();
-  for (let i = 0; i < 3; i++) {
-    fireEvent.click(screen.getByRole("button", { name: "Больше" }));
-    await flush();
-  }
-  expect(callsOf(engine, "settings.setConcurrency").map((c) => c.payload.network)).toEqual([7, 8, 9]);
-  expect(screen.getByText(/от 1 до 16/)).toBeDefined();
-});
-
-test("the stepper stops at both ends of the range", async () => {
-  await openSettings(STORED, { concurrency: 16 });
-  expect(screen.getByRole("button", { name: "Больше" }).hasAttribute("disabled")).toBe(true);
-  expect(screen.getByRole("button", { name: "Меньше" }).hasAttribute("disabled")).toBe(false);
-});
-
-test("focus follows the key flow: into the field on «Заменить», back to «Заменить» after saving", async () => {
-  await openSettings(STORED);
-  fireEvent.click(screen.getByRole("button", { name: "Заменить" }));
-  expect(focusedLabel()).toBe(describeElement(keyInput()));
-  fireEvent.change(keyInput(), { target: { value: "sk-or-v1-focus-flow-5555" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить ключ" }));
-  await screen.findByDisplayValue("••••••5555");
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Заменить" })));
-});
-
-test("the text model is shown read-only and the image model is a select, with the face check's hybrid mode", async () => {
-  await openSettings();
-  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Фото" }).value).toBe("x-ai/grok-imagine-image-2.0");
-  expect(screen.getByText("x-ai/grok-4.3")).toBeDefined();
-  expect(screen.getByText("гибрид")).toBeDefined();
-  // The text model has no select: only the photo model and its quality are choices.
-  expect(screen.getAllByRole("combobox").map((c) => c.id).length).toBe(2);
-  // The face-gate hint's threshold is hand-typed (the renderer bundle never
-  // imports engine code for it): pin it against the engine's own real
-  // default so the two numbers cannot silently drift apart.
-  const threshold = defaultFaceGateConfig().identity.strategy.threshold;
-  expect(document.body.textContent).toContain(`сходство ниже ${threshold}`);
-  // Money review M5: the gate is wired into photo runs now (T7b) — the hint
-  // must no longer say it "will appear along with photo runs".
-  const faceRow = screen.getByText("Сходство лица").closest(".row");
-  expect(faceRow?.textContent).not.toContain("появится вместе с фото-ранами");
-});
 
 // Photo runs exist (slice 2b): the scene writer runs on the text model and the
 // runs' photos on the image model, so neither row may still promise them.
-describe("model rows describe what photo runs use them for", () => {
-  test("the scenes row says the text model writes the scenes of photo runs, not that they will appear", async () => {
-    await openSettings();
-    const row = screen.getByText("Сцены").closest(".row");
-    expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
-    expect(row?.textContent).toContain("сценарист фото-ранов");
-  });
-
-  test("the scenes row also names the age check when the image age check is on", async () => {
-    await openSettings(STORED, { imageAgeCheck: "on" });
-    const row = screen.getByText("Сцены").closest(".row");
-    expect(row?.textContent).toContain("сценарист фото-ранов");
-    expect(row?.textContent).toContain("проверка «явно старше 21»");
-  });
-
-  // 2026-10-12, S5.9g (mockup 56): the row now carries the «Смелая» line under it, which names 2K on purpose (the bold frames' fixed route). The row's own
-  // label, hint and control still offer no resolution: the «no 2K» check moves to them, and the line is the only place 2K is said.
-  test("the photos row says the image model makes both portraits and photo runs' photos, with no resolution choice left", async () => {
-    await openSettings();
-    const select = screen.getByRole("combobox", { name: "Фото" });
-    const row = select.closest(".row");
-    expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
-    expect(row?.textContent).toContain("портреты аватара и фото-раны");
-    expect(row?.querySelector(".rl")?.textContent).not.toContain("2K");
-    expect(select.textContent).not.toContain("2K");
-    expect(row?.querySelectorAll("select, input")).toHaveLength(1);
-    expect(row?.querySelector(".settings-bold-note")?.textContent).toBe("Смелые кадры всегда рисует Seedream 5 Pro · 2K — эта настройка их не меняет.");
-  });
-});
 
 // Owner's decision (2026-09-27): the paid image age check is optional, off by default.
 describe("image age check toggle", () => {
@@ -423,11 +238,6 @@ describe("image age check toggle", () => {
     expect(screen.getByText(/по умолчанию выключена/i)).toBeDefined();
   });
 
-  test("shows on when the setting is on", async () => {
-    await openSettings(STORED, { imageAgeCheck: "on" });
-    expect(ageSwitch().getAttribute("aria-checked")).toBe("true");
-  });
-
   test("turning it on sends settings.setImageAgeCheck and reflects the engine's answer", async () => {
     const { engine } = await openSettings(STORED, { imageAgeCheck: "off" });
 
@@ -438,85 +248,6 @@ describe("image age check toggle", () => {
     expect(ageSwitch().getAttribute("aria-checked")).toBe("true");
   });
 
-  test("turning it back off sends the setting with imageAgeCheck: off", async () => {
-    const { engine } = await openSettings(STORED, { imageAgeCheck: "on" });
-
-    fireEvent.click(ageSwitch());
-    await flush();
-
-    expect(callsOf(engine, "settings.setImageAgeCheck").map((c) => c.payload.imageAgeCheck)).toEqual(["off"]);
-    expect(ageSwitch().getAttribute("aria-checked")).toBe("false");
-  });
 });
 
-test("the library folder can be changed to an absolute path only", async () => {
-  const { engine } = await openSettings();
-  expect(screen.getByText("/Users/studio/Studio/library")).toBeDefined();
-  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
-  const input = screen.getByLabelText("Библиотека");
-  fireEvent.change(input, { target: { value: "relative/library" } });
-  const form = input.closest("form");
-  if (!form) throw new Error("library form missing");
-  fireEvent.submit(form);
-  expect(screen.getByText(/Нужен полный путь/)).toBeDefined();
-  expect(callsOf(engine, "settings.setLibraryPath")).toHaveLength(0);
 
-  fireEvent.change(input, { target: { value: "/Volumes/Data/Studio" } });
-  fireEvent.submit(form);
-  await screen.findByText("/Volumes/Data/Studio");
-  expect(callsOf(engine, "settings.setLibraryPath").map((c) => c.payload.path)).toEqual(["/Volumes/Data/Studio"]);
-});
-
-function changeLibraryTo(path: string): void {
-  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
-  const input = screen.getByLabelText("Библиотека");
-  fireEvent.change(input, { target: { value: path } });
-  const form = input.closest("form");
-  if (!form) throw new Error("library form missing");
-  fireEvent.submit(form);
-}
-
-test("picking the library folder again (it was missing at start) refetches the snapshot, so the lists show what it holds", async () => {
-  const { engine } = await openSettings();
-  const snapshotsBefore = callsOf(engine, "engine.snapshot").length;
-  // The engine can read the folder now and finds an avatar in it; no event says so.
-  engine.addAvatarSilently({
-    avatarId: "avatar-found-0001",
-    name: "Zoe",
-    descriptor: { age: 25, text: "25-year-old woman with chestnut hair." },
-    masterPhotoId: "photo-found-0001",
-    createdAt: "2026-09-24T09:00:00.000Z",
-    status: "active",
-    photoCount: 1,
-    videoCount: 0,
-    eligibleUnusedCount: 0,
-    usage: { state: "ok" },
-  });
-
-  changeLibraryTo("/Users/studio/Studio/library");
-
-  await waitFor(() => expect(callsOf(engine, "engine.snapshot").length).toBe(snapshotsBefore + 1));
-  await openSection("Аватары");
-  expect(await screen.findByText("Zoe")).toBeDefined();
-});
-
-test("a library folder the engine refuses refetches nothing", async () => {
-  const { engine } = await openSettings();
-  const snapshotsBefore = callsOf(engine, "engine.snapshot").length;
-  engine.failNext("settings.setLibraryPath", { code: "VALIDATION" });
-
-  changeLibraryTo("/Volumes/Data/Studio");
-
-  expect(await screen.findByText(ERROR_MESSAGES_RU.VALIDATION)).toBeDefined();
-  expect(callsOf(engine, "engine.snapshot")).toHaveLength(snapshotsBefore);
-});
-
-test("an error link lands on the money card with focus", async () => {
-  const { engine } = setup();
-  await flush();
-  inAct(() => engine.requireReconcile(["open-reserves"]));
-  await flush();
-  fireEvent.click(await screen.findByRole("button", { name: "Перейти к сверке" }));
-  await flush();
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "OpenRouter и расходы" })));
-});

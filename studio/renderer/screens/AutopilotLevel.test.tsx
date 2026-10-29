@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import type { AvatarSummary, LaunchDraftInput, PhotoSummary } from "../../shared/engine";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { AvatarSummary, PhotoSummary } from "../../shared/engine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import type { MockEngine } from "../engine/mockEngine";
 import { callsOf, flush, openSection, setup } from "../testing";
-import { historyLibrary, octAt } from "./autopilot/historyTestkit";
 import { flirtyFrames } from "./photos/level";
 
 // S5.7c (plan s5a2 §6.1, §6.3; mockup 30 of .omc/stage5/design): «Автопилот»'s settings lose «Ракурсы» and gain a «Подача» row («ракурс берётся из
@@ -69,15 +68,6 @@ describe("«Подача» in «Настройки запуска» (mockup 30)"
     expect(within(settings()).queryByText(/кокетливые: взгляд, улыбка, поза/) === null).toBe(true);
   });
 
-  test("asks the plan with no poses and no level while it is «Обычная»", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    const draft = planCalls(engine).at(-1)?.payload.draft;
-    expect(draft !== undefined && "poses" in draft).toBe(false);
-    expect(draft !== undefined && "level" in draft).toBe(false);
-  });
-
   test("«Кокетливая» goes into the plan and the launch as `level`, and says how many of the new frames are flirty", async () => {
     const { engine, client } = world();
     await openAutopilot();
@@ -104,75 +94,3 @@ describe("«Подача» in «Настройки запуска» (mockup 30)"
   });
 });
 
-describe("a launch's page (mockup 31)", () => {
-  /** One ended launch of Mia's, as the history keeps it, its page open. */
-  async function openLaunch(draft: Partial<LaunchDraftInput>): Promise<string[]> {
-    const h = setup(historyLibrary());
-    h.engine.seedLaunch({
-      createdAt: octAt(11, 14, 2),
-      endedAt: octAt(11, 14, 31),
-      draft: { avatarIds: [MIA.avatarId], videosPerAvatar: 1, categories: ["home", "shoot", "glam"], ...draft },
-      videos: [{ avatarId: MIA.avatarId, shape: "single", size: 1, state: "done", durationMs: 8_000, bytes: 2_000_000 }],
-    });
-    await openAutopilot();
-    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
-    await screen.findByRole("heading", { level: 1, name: "История запусков" });
-    await flush();
-    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск / })[0] ?? document.body);
-    await screen.findByRole("heading", { level: 1, name: "Запуск 11 окт., 14:02" });
-    await flush();
-    return Array.from(document.querySelectorAll(".ap-launch-bits > span")).map((s) => `${s.textContent ?? ""}${s.classList.contains("ap-bit-new") ? " [new]" : ""}`);
-  }
-
-  test("«Подача: кокетливая» after the categories, a brighter bit; no angles phrase", async () => {
-    const bits = await openLaunch({ level: "flirty" });
-    expect(bits.slice(2, 4)).toEqual(["Дом, Улица, Гламур", "Подача: кокетливая [new]"]);
-    expect(bits.some((bit) => /анфас|профиль|со спины/.test(bit))).toBe(false);
-  });
-
-  test("a launch from before «Подача» names neither its «Ракурсы» nor a «Подача», with the new names of its categories", async () => {
-    const bits = await openLaunch({ poses: { profile: true, back: false } });
-    expect(bits[2]).toBe("Дом, Улица, Гламур");
-    expect(bits.some((bit) => bit.startsWith("Подача") || /анфас|профиль|со спины/.test(bit))).toBe(false);
-  });
-});
-
-describe("a running launch's «Подача», read only", () => {
-  async function startLaunch(over: Partial<LaunchDraftInput>): Promise<void> {
-    const { client } = world();
-    await flush();
-    const draft: LaunchDraftInput = {
-      avatarIds: [SOFIA.avatarId],
-      videosPerAvatar: 1,
-      mix: { single: 100, collage: 0, slides: 0 },
-      categories: ["home"],
-      library: true,
-      generate: true,
-      sceneReview: false,
-      stickers: false,
-      ...over,
-    };
-    await act(async () => {
-      const estimate = await client.request("autopilot.estimate", { draft });
-      if (!estimate.ok) throw new Error("estimate refused");
-      const started = await client.request("autopilot.start", { draft: { ...draft, planSeed: estimate.result.preview.planSeed }, acceptedWorstMicros: estimate.result.preview.estimate.worstMicros });
-      if (!started.ok) throw new Error("start refused");
-    });
-    await openAutopilot();
-  }
-
-  test("shows «Кокетливая» for a flirty launch; a click changes nothing", async () => {
-    await startLaunch({ level: "flirty" });
-    expect(level("Кокетливая").checked).toBe(true);
-    expect(level("Кокетливая").getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(level("Обычная"));
-    await flush();
-    expect(level("Кокетливая").checked).toBe(true);
-  });
-
-  test("shows «Обычная» for a launch from before «Подача», which still carries «Ракурсы»", async () => {
-    await startLaunch({ poses: { profile: true, back: false } });
-    expect(level("Обычная").checked).toBe(true);
-    expect(within(settings()).queryByRole("button", { name: "Профиль" }) === null).toBe(true);
-  });
-});

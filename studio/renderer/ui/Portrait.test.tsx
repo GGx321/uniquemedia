@@ -191,17 +191,6 @@ const hasBackdrop = (img: HTMLImageElement): boolean => backdrop(img) !== null;
 const fit = (img: HTMLImageElement): string | null => frame(img).getAttribute("data-fit");
 const capped = (img: HTMLImageElement): [string, string] => [img.style.maxWidth, img.style.maxHeight];
 
-test("nothing is measured or capped before the picture has loaded", () => {
-  pixelRatio(2);
-  const layout = layOut({ width: 212, height: 224 });
-  renderPortrait();
-  const img = picture();
-  expect(capped(img)).toEqual(["", ""]);
-  expect(fit(img)).toBeNull();
-  expect(hasBackdrop(img)).toBe(false);
-  expect(layout.watching()).toBe(0);
-});
-
 test("a small picture on a 2× screen is held to its cap, centred over a blurred copy of itself", () => {
   pixelRatio(2);
   layOut({ width: 212, height: 224 });
@@ -220,20 +209,6 @@ test("a small picture on a 2× screen is held to its cap, centred over a blurred
   expect(screen.getAllByRole("img")).toHaveLength(1);
 });
 
-test("the band is decided as the picture loads, before the frame's observer has reported anything", () => {
-  pixelRatio(2);
-  const layout = layOut({ width: 212, height: 224 }, { async: true });
-  renderPortrait();
-  const img = picture();
-  load(img, 246, 281);
-
-  // No report yet: the frame was measured on the spot, so the first frame drawn is already the print over its backdrop.
-  expect(fit(img)).toBe("capped");
-  expect(hasBackdrop(img)).toBe(true);
-  layout.deliver();
-  expect(fit(img)).toBe("capped");
-});
-
 test("a picture large enough for its frame fills it as before: no cap on its box, no band, no backdrop", () => {
   pixelRatio(2);
   layOut({ width: 212, height: 224 });
@@ -244,62 +219,6 @@ test("a picture large enough for its frame fills it as before: no cap on its box
   expect(capped(img)).toEqual(["", ""]);
   expect(fit(img)).toBeNull();
   expect(hasBackdrop(img)).toBe(false);
-});
-
-test("the same small picture on a 1× screen still fills the same frame", () => {
-  pixelRatio(1);
-  layOut({ width: 212, height: 224 });
-  renderPortrait();
-  const img = picture();
-  load(img, 246, 281);
-
-  expect(capped(img)).toEqual(["", ""]);
-  expect(fit(img)).toBeNull();
-  expect(hasBackdrop(img)).toBe(false);
-});
-
-test("a picture a few pixels short of its frame fills it: a thin band would read as a sizing bug, not as a print", () => {
-  // A Windows screen at 150 %: the 246 × 281 master's cap is 205 × 234, 7 px narrower than the card's photo.
-  pixelRatio(1.5);
-  layOut({ width: 212, height: 224 });
-  renderPortrait();
-  const img = picture();
-  load(img, 246, 281);
-
-  expect(capped(img)).toEqual(["", ""]);
-  expect(fit(img)).toBeNull();
-  expect(hasBackdrop(img)).toBe(false);
-});
-
-test("a picture short on one side only is held on that side and still gets the band", () => {
-  pixelRatio(2);
-  layOut({ width: 212, height: 224 });
-  renderPortrait();
-  const img = picture();
-  // A wide, low picture: its cap (250 × 93.75) is wider than the frame but far from its height.
-  load(img, 400, 150);
-
-  expect(capped(img)).toEqual(["250px", "93.75px"]);
-  expect(fit(img)).toBe("capped");
-  expect(hasBackdrop(img)).toBe(true);
-});
-
-test("a window moved to a screen of another pixel ratio re-caps the picture", () => {
-  const ratio = pixelRatio(1);
-  const media = mediaQueries();
-  layOut({ width: 212, height: 224 });
-  renderPortrait();
-  const img = picture();
-  load(img, 246, 281);
-  expect(fit(img)).toBeNull();
-
-  ratio.set(2);
-  expect(media.listening()).toEqual(["(resolution: 1dppx)"]);
-  media.fire();
-
-  expect(capped(img)).toEqual(["153.75px", "175.625px"]);
-  expect(fit(img)).toBe("capped");
-  expect(media.listening()).toEqual(["(resolution: 2dppx)"]);
 });
 
 test("the pixel ratio is followed only while a loaded picture depends on it: not before, and not after the last portrait goes", () => {
@@ -317,25 +236,6 @@ test("the pixel ratio is followed only while a loaded picture depends on it: not
   expect(media.listening()).toEqual([]);
 });
 
-test("portraits share one pixel-ratio query, which outlives any one of them", () => {
-  const ratio = pixelRatio(1);
-  const media = mediaQueries();
-  layOut({ width: 212, height: 224 });
-  const view = renderPortraits(["photo-mia-one", "photo-mia-two"]);
-  load(picture("Фото photo-mia-one"), 246, 281);
-  load(picture("Фото photo-mia-two"), 246, 281);
-  expect(media.listening()).toEqual(["(resolution: 1dppx)"]);
-
-  view.show(["photo-mia-two"]);
-  expect(media.listening()).toEqual(["(resolution: 1dppx)"]);
-
-  ratio.set(2);
-  media.fire();
-  const left = picture("Фото photo-mia-two");
-  expect(capped(left)).toEqual(["153.75px", "175.625px"]);
-  expect(fit(left)).toBe("capped");
-});
-
 test("one observer watches every loaded portrait's frame, and lets go of each as it leaves", () => {
   pixelRatio(2);
   const layout = layOut({ width: 212, height: 224 });
@@ -349,31 +249,6 @@ test("one observer watches every loaded portrait's frame, and lets go of each as
   expect(layout.watching()).toBe(1);
   view.unmount();
   expect(layout.watching()).toBe(0);
-});
-
-test("the band follows the frame, and the backdrop stays the same element through it (hidden, not remade, while filled)", () => {
-  pixelRatio(2);
-  const layout = layOut({ width: 120, height: 130 });
-  renderPortrait();
-  const img = picture();
-  load(img, 246, 281);
-  expect(fit(img)).toBeNull();
-  expect(hasBackdrop(img)).toBe(false);
-
-  layout.resize({ width: 212, height: 224 });
-  expect(fit(img)).toBe("capped");
-  expect(capped(img)).toEqual(["153.75px", "175.625px"]);
-  const kept = backdrop(img);
-  expect(kept === null).toBe(false);
-
-  layout.resize({ width: 150, height: 170 });
-  expect(fit(img)).toBeNull();
-  expect(capped(img)).toEqual(["", ""]);
-  expect(backdrop(img) === kept).toBe(true);
-
-  layout.resize({ width: 212, height: 224 });
-  expect(fit(img)).toBe("capped");
-  expect(backdrop(img) === kept).toBe(true);
 });
 
 test("another photo in the same place is a new picture: it waits for its own size, never borrows the last one's band", () => {

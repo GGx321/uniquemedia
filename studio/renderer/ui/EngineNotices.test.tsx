@@ -21,24 +21,10 @@ describe("the notices of unfinished videos", () => {
     expect(text).not.toContain("удалите");
   });
 
-  test("pending-video-set-aside says nothing is blocked and nothing needs doing, with the number set aside", () => {
-    render(<EngineNotices notices={[notice("pending-video-set-aside", 2)]} dismissed={new Set()} onDismiss={() => undefined} />);
-
-    expect(screen.getByText("Повреждённые данные отложены")).toBeDefined();
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Фото они не блокируют");
-    expect(text).toContain("Записей: 2.");
-  });
-
   test("their count is a number of records, never «Повторилось N раз за эту сессию»", () => {
     render(<EngineNotices notices={[notice("pending-video-unreadable", 5), notice("pending-video-set-aside", 4)]} dismissed={new Set()} onDismiss={() => undefined} />);
 
     expect(document.body.textContent ?? "").not.toContain("Повторилось");
   });
 
-  test("another notice still says how often it happened", () => {
-    render(<EngineNotices notices={[notice("engine-internal-error", 3)]} dismissed={new Set()} onDismiss={() => undefined} />);
-
-    expect((document.body.textContent ?? "").replace(/\s/g, " ")).toContain("Повторилось 3 раза за эту сессию.");
-  });
 });

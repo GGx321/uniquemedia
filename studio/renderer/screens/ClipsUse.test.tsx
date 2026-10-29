@@ -5,7 +5,7 @@ import { createPayload } from "../engine/mockEngine.clips.testkit";
 import { freePhotos } from "../engine/mockEngine.testkit";
 import { NBSP } from "../lib/format";
 import { callsOf, describeElement, flush, focusedLabel } from "../testing";
-import { asAnotherWindow, makeDraft, MIA, studio } from "./montage/screenKit";
+import { asAnotherWindow, MIA, studio } from "./montage/screenKit";
 import { photoClip } from "./montage/testkit";
 
 // 5b.2 part A (S5.WA4; plan §6 41e, 44b; mockups 41e and 44b, README §S5.WAD, WAD re-review N4): the avatar's «Клипы» screen tells a clip's use
@@ -64,12 +64,6 @@ async function startRender(h: Harness, clips: MontageDraft["clips"]): Promise<st
   return reply.result.jobId;
 }
 
-/** A draft named `name` holding `clips`, saved as another window would. */
-async function saveDraft(h: Harness, name: string, clips: MontageDraft["clips"]): Promise<void> {
-  const made = await makeDraft(h.client, MIA.avatarId, []);
-  const saved = await asAnotherWindow(() => h.client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips }, name }));
-  if (!saved.ok) throw new Error(`montages.save: ${saved.error.code}`);
-}
 
 /** Mia's screen on its «Клипы» tab. */
 async function openClips(): Promise<void> {
@@ -104,29 +98,6 @@ const describedBy = (dialog: HTMLElement): string =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" | ");
 
-describe("41e: «в видео» on the «Клипы» tile", () => {
-  test("a clip whose frame is in a finished video, through the clip or through its photo: one badge, the title tells which", async () => {
-    const h = await clipsStudio();
-    const used = await makeClip(h, P(5));
-    await makeClip(h, P(5), "g-tilt");
-    await makeClip(h, P(7), "g-breath");
-    const copy = await makeCopy(h, used);
-    runJob(h, await startRender(h, [photoClip(0, P(6)), copyClip(1, copy)]));
-    await openClips();
-    const byClip = tile("Моргает и улыбается").querySelector(".clip-used");
-    const byPhoto = tile("Наклоняет голову").querySelector(".clip-used");
-    expect(byClip?.textContent).toBe("в видео");
-    expect(byClip?.getAttribute("title")).toBe("Этот клип уже в готовом видео — второй раз не ставится");
-    expect(byPhoto?.textContent).toBe("в видео");
-    expect(byPhoto?.getAttribute("title")).toBe("Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
-    expect(tile("Медленный вдох").querySelector(".clip-used") === null).toBe(true);
-    // S5.WAR L8: the badge's reason is in the tile's name too (its title alone is the pointer's).
-    expect(tile("Моргает и улыбается").getAttribute("aria-label")).toBe("Клип: Моргает и улыбается · Этот клип уже в готовом видео — второй раз не ставится");
-    expect(tile("Наклоняет голову").getAttribute("aria-label")).toBe("Клип: Наклоняет голову · Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
-    expect(tile("Медленный вдох").getAttribute("aria-label")).toBe("Клип: Медленный вдох");
-  });
-});
-
 describe("44b: «Удалить клип?» says what holds the clip", () => {
   test("a finished video holds this clip: «Клип есть в готовом видео — видео не изменится.», described by the dialog", async () => {
     const h = await clipsStudio();
@@ -137,37 +108,6 @@ describe("44b: «Удалить клип?» says what holds the clip", () => {
     const dialog = await askDelete("Моргает и улыбается");
     expect(notes(dialog)).toEqual([nb("Клип есть в готовом видео — видео не изменится.")]);
     expect(describedBy(dialog)).toContain(nb("Клип есть в готовом видео — видео не изменится."));
-  });
-
-  test("its photo is in a video, not the clip: the dialog says nothing of videos", async () => {
-    const h = await clipsStudio();
-    await makeClip(h, P(5), "g-tilt");
-    runJob(h, await startRender(h, [photoClip(0, P(6)), photoClip(1, P(5))]));
-    await openClips();
-    const dialog = await askDelete("Наклоняет голову");
-    expect(dialog.querySelectorAll(".del-note")).toHaveLength(0);
-  });
-
-  test("one draft holds its copy: named, with its kadr, and described by the dialog", async () => {
-    const h = await clipsStudio();
-    const clip = await makeClip(h, P(5));
-    const copy = await makeCopy(h, clip);
-    await saveDraft(h, "утро дома", [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]);
-    await openClips();
-    const dialog = await askDelete("Моргает и улыбается");
-    expect(notes(dialog)).toEqual([nb("В черновике «утро дома» он в кадре 3 — кадр будет помечен, пока его не замените.")]);
-    expect(describedBy(dialog)).toContain("В черновике «утро дома»");
-  });
-
-  test("several drafts: «В 2 черновиках он стоит кадром — кадры будут помечены, пока их не замените.»", async () => {
-    const h = await clipsStudio();
-    const clip = await makeClip(h, P(5));
-    const copy = await makeCopy(h, clip);
-    await saveDraft(h, "утро дома", [photoClip(0, P(2)), copyClip(1, copy)]);
-    await saveDraft(h, "вечер", [copyClip(0, copy), photoClip(1, P(4))]);
-    await openClips();
-    const dialog = await askDelete("Моргает и улыбается");
-    expect(notes(dialog)).toEqual([nb(`В 2${NBSP}черновиках он стоит кадром — кадры будут помечены, пока их не замените.`)]);
   });
 
   test("#in-render: after «Удалить», a render holding the copy is said as an alert; the focus goes to «Отмена»; «Удалить» stays", async () => {

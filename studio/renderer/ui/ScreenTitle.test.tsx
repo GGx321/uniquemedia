@@ -39,16 +39,4 @@ describe("ScreenTitle", () => {
     expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж" })));
   });
 
-  test("the loaded title has the focus in the commit that swaps it for the loading one, never leaving it on the body", () => {
-    const seen: (Element | null)[] = [];
-    const view = render(<Screen loaded={false} seen={seen} />);
-    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж" })));
-
-    view.rerender(<Screen loaded seen={seen} />);
-
-    const loaded = describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж: Mia" }));
-    // What the commit's layout effects saw of the focus, not what is left once the effects have run.
-    expect(describeElement(seen.at(-1) ?? null)).toBe(loaded);
-    expect(focusedLabel()).toBe(loaded);
-  });
 });

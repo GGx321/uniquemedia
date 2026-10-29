@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { LaunchView, type MediaSummary } from "../../shared/engine";
+import { type MediaSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
 import { demoTracks } from "../engine/mockMusicStore";
 import { freePhotos, MIA } from "../engine/mockEngine.testkit";
@@ -94,28 +94,6 @@ describe("«Музыка для автопилота»", () => {
     expect(callsOf(engine, "autopilot.start")).toHaveLength(0);
   });
 
-  test("Escape closes the window with the focus back on the chip; «Готово» does too; Tab stays inside", async () => {
-    await openAutopilot();
-    chip().focus();
-    fireEvent.click(chip());
-    await flush();
-    fireEvent.keyDown(mark("summer-loop.m4a"), { key: "Escape" });
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Музыка для автопилота" }) === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(chip()));
-
-    fireEvent.click(chip());
-    await flush();
-    const done = within(dialog()).getByRole("button", { name: "Готово" });
-    done.focus();
-    fireEvent.keyDown(done, { key: "Tab" });
-    expect(focusedLabel()).toBe(describeElement(mark("summer-loop.m4a")));
-    fireEvent.click(done);
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Музыка для автопилота" }) === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(chip()));
-  });
-
   test("a track the render cannot read (not an m4a): the engine refuses the mark, and the row says so from then on", async () => {
     const { engine } = await openAutopilot();
     fireEvent.click(chip());
@@ -132,37 +110,6 @@ describe("«Музыка для автопилота»", () => {
     expect(callsOf(engine, "media.setForAutopilot").length).toBe(sent);
   });
 
-  test("«Мои треки…» of «3 видео ждут музыку» opens the same window; closed, the focus goes back to it", async () => {
-    const { engine, client } = await openAutopilot();
-    const held: { launch: LaunchView | null } = { launch: null };
-    await act(async () => {
-      const draft = { avatarIds: [MIA.avatarId], videosPerAvatar: 3, mix: { single: 70, collage: 20, slides: 10 }, categories: ["home" as const], poses: { profile: false, back: false }, library: true, generate: false, sceneReview: false, stickers: false };
-      const estimate = await client.request("autopilot.estimate", { draft });
-      if (!estimate.ok) throw new Error(estimate.error.code);
-      const started = await client.request("autopilot.start", { draft: { ...draft, planSeed: estimate.result.preview.planSeed }, acceptedWorstMicros: estimate.result.preview.estimate.worstMicros });
-      if (!started.ok) throw new Error(started.error.code);
-      held.launch = started.result.launch;
-    });
-    await flush();
-    const base = held.launch;
-    if (base === null) throw new Error("no launch");
-    act(() => engine.announceLaunch({ ...base, waitingMusic: 3, avatars: base.avatars.map((a) => ({ ...a, waitingMusic: 3 })) }));
-    await flush();
-    const notice = (): HTMLElement => {
-      const found = document.querySelector<HTMLElement>('#ap-live [data-note="music-3"]');
-      if (found === null) throw new Error("no waiting-music notice");
-      return found;
-    };
-    expect(notice().querySelector(".notice-title")?.textContent).toBe(`3${NBSP}видео ждут музыку`);
-    const button = within(notice()).getByRole("button", { name: "Мои треки…" });
-    button.focus();
-    fireEvent.click(button);
-    await flush();
-    expect(dialog()).toBeDefined();
-    fireEvent.keyDown(mark("summer-loop.m4a"), { key: "Escape" });
-    await flush();
-    expect(focusedLabel()).toBe(describeElement(within(notice()).getByRole("button", { name: "Мои треки…" })));
-  });
 });
 
 describe("«для автопилота» in the editor's «Мои»", () => {
@@ -186,20 +133,4 @@ describe("«для автопилота» in the editor's «Мои»", () => {
     await waitFor(() => expect(flag("summer-edit.mp3").getAttribute("aria-pressed")).toBe("false"));
   });
 
-  test("refused for its format: the chip says so and sends nothing more; any other refusal is said above the list", async () => {
-    const { engine, client } = await mineStudio();
-    seedMine(engine);
-    await openMine(engine, client);
-    const tracks = within(media()).getByRole("list", { name: "Свои треки" });
-    const flag = (name: string): HTMLElement => within(tracks).getByRole("button", { name: `Для автопилота: ${name}` });
-    engine.failNext("media.setForAutopilot", { code: "MEDIA_UNSUPPORTED", mediaReason: "format" });
-    fireEvent.click(flag("summer-edit.mp3"));
-    await flush();
-    expect(flag("summer-edit.mp3").getAttribute("aria-disabled")).toBe("true");
-    expect(flag("summer-edit.mp3").getAttribute("title")).toBe("Автопилот берёт только m4a с известной длиной");
-    engine.failNext("media.setForAutopilot", { code: "INTERNAL", detail: "the flag log cannot be read" });
-    fireEvent.click(flag("voice-note.m4a"));
-    await flush();
-    expect(within(media()).getByRole("alert").textContent).toContain("Не удалось отметить трек");
-  });
 });

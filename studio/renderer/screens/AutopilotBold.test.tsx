@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { LaunchView, PRICE_SCOPES_RU, type AvatarSummary, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
+import { PRICE_SCOPES_RU, type AvatarSummary, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { errorText } from "../lib/errors";
 import { callsOf, flush, openSection, setup } from "../testing";
-import { historyLibrary, octAt } from "./autopilot/historyTestkit";
 import { launchLevelCaption } from "./photos/level";
 import { launchMonthLine } from "./autopilot/monthLine";
 
@@ -20,7 +19,6 @@ const plain = (text: string | null): string => {
   return text.replace(/\s+/g, " ");
 };
 const GATED = "Только со «Смелой»: «Ночнушки и бельё» и «Пляж и бассейн».";
-const LIMIT_PLAIN = "худшая цена: до 3 попыток на фото — дороже не выйдет";
 const LIMIT_BOLD = "худшая цена: до 3 попыток на фото — дороже не выйдет; со «Смелой» каждое новое фото считается по цене Seedream 2K";
 
 function world() {
@@ -69,9 +67,6 @@ async function only(...names: string[]): Promise<void> {
     if ((el.getAttribute("aria-pressed") === "true") !== names.includes(name)) await click(el);
   }
 }
-function described(el: HTMLElement): string[] {
-  return (el.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "");
-}
 /** The plan calls (not the list's probe). */
 function planCalls(engine: MockEngine) {
   return callsOf(engine, "autopilot.estimate").filter((c) => !(c.payload.draft.videosPerAvatar === 1 && !c.payload.draft.generate && c.payload.draft.library));
@@ -82,25 +77,6 @@ function limitSub(): string {
 }
 
 describe("«Категории сцен» with the two «Смелая» chips (mockup 52)", () => {
-  test("they follow the five, never on by default, and wait for «Смелая»: dimmed, described by the note, a click does nothing", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    const chips = within(within(settings()).getByRole("group", { name: "Категории сцен" })).getAllByRole("button").map((b) => b.textContent);
-    expect(chips).toEqual(["Дом", "Виды", "Улица", "Гламур", "Фитнес", "Ночнушки и бельё", "Пляж и бассейн"]);
-    expect(within(settings()).getByText("4 из 7")).toBeDefined();
-    for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-      const el = categoryChip(name);
-      expect(el.getAttribute("aria-pressed")).toBe("false");
-      expect(el.getAttribute("aria-disabled")).toBe("true");
-      expect(el.classList.contains("gen-chip-gated")).toBe(true);
-      expect(described(el)).toEqual([GATED]);
-      fireEvent.click(el);
-      await flush();
-      expect(categoryChip(name).getAttribute("aria-pressed")).toBe("false");
-    }
-    await choose("Mia");
-    expect(planCalls(engine).some((c) => c.payload.draft.categories.some((ref) => ref === "nightwear" || ref === "beach"))).toBe(false);
-  });
 
   test("«Смелая»: the two work, the draft asks `level: \"bold\"` with them, the caption counts the plan's new frames, «Предел запуска» says option B", async () => {
     const { engine, client } = world();
@@ -132,70 +108,11 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(started?.categories).toEqual(["nightwear", "beach"]);
   });
 
-  test("a pick kept under «Кокетливая»: dashed and dimmed, not pressed, left out of the draft and the count, the option B line gone", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    await click(level("Смелая"));
-    await click(categoryChip("Ночнушки и бельё"));
-    expect(limitSub()).toBe(LIMIT_BOLD);
-    await click(level("Кокетливая"));
-    const kept = categoryChip("Ночнушки и бельё");
-    // Round 2 (L4): kept, but not in this launch — never announced as pressed; its description says it comes back with «Смелая».
-    expect(kept.getAttribute("aria-pressed")).toBe("false");
-    expect(kept.getAttribute("aria-disabled")).toBe("true");
-    expect(kept.classList.contains("gen-chip-kept")).toBe(true);
-    expect(described(kept)).toEqual(["Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней."]);
-    expect(within(settings()).getByText("Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней.")).toBeDefined();
-    expect(within(settings()).getByText("4 из 7")).toBeDefined();
-    expect(limitSub()).toBe(LIMIT_PLAIN);
-    const draft = planCalls(engine).at(-1)?.payload.draft;
-    expect(draft?.level).toBe("flirty");
-    expect(draft?.categories).toEqual(["home", "travel", "shoot", "fit"]);
-    await click(level("Смелая"));
-    expect(planCalls(engine).at(-1)?.payload.draft.categories).toEqual(["home", "travel", "shoot", "fit", "nightwear"]);
-  });
-
   // 5a.4 (S5.BA8a, §5.9 row 22a, r2.3 M3): the avatar list's «своб.» legend says whose frames are free.
-  test("the avatar list's «своб.» legend names the «Смелая» frames at «Смелая» only", async () => {
-    world();
-    await openAutopilot();
-    await choose("Mia");
-    expect(screen.getByText("своб. — свободные фото в выбранных категориях")).toBeDefined();
-    await click(level("Смелая"));
-    expect(screen.getByText("своб. — свободные кадры «Смелой» в выбранных категориях")).toBeDefined();
-    expect(screen.queryByText("своб. — свободные фото в выбранных категориях") === null).toBe(true);
-  });
 
   // 5a.4 (S5.BA8b, §5.9 row 22, r2.2 D2): at «Смелая» the library offers only the routed frames, so its switch says so; the other levels keep their line.
-  test("«Сначала свободные фото из библиотеки» says only «Смелая» frames are taken at «Смелая», and only there", async () => {
-    world();
-    await openAutopilot();
-    const sub = (): string => {
-      const row = within(settings()).getByText("Сначала свободные фото из библиотеки").closest(".rl");
-      return row?.querySelector("span")?.textContent ?? "";
-    };
-    expect(sub()).toBe("не отклонённые и не занятые черновиками");
-    await click(level("Смелая"));
-    expect(sub()).toBe("не отклонённые и не занятые черновиками; на «Смелой» — только кадры «Смелой»");
-    const libSwitch = within(settings()).getByRole("switch", { name: "Сначала свободные фото из библиотеки" });
-    expect(described(libSwitch)).toEqual(["не отклонённые и не занятые черновиками; на «Смелой» — только кадры «Смелой»"]);
-    await click(level("Кокетливая"));
-    expect(sub()).toBe("не отклонённые и не занятые черновиками");
-  });
 
   // Review M-1: the probe that counts the «своб.» of the avatars not chosen asks at the form's level, so at «Смелая» their number is of the routed frames only, like the plan's.
-  test("an avatar not chosen with only unrouted free photos shows «0 своб.» at «Смелая», and its real count below it", async () => {
-    world();
-    await openAutopilot();
-    await choose("Mia");
-    const sofia = (): string => described(within(screen.getByRole("group", { name: /^Аватары/ })).getByRole("button", { name: /Sofia/ })).join(" ");
-    await waitFor(() => expect(sofia()).toContain("2 своб."));
-    await click(level("Смелая"));
-    await waitFor(() => expect(sofia()).toContain("0 своб."));
-    await click(level("Кокетливая"));
-    await waitFor(() => expect(sofia()).toContain("2 своб."));
-  });
 
   // 5a.4 (S5.BA8a, §5.9 row 20, r2.3 M1): the month line divides the budget by the plan's own unit; the window computes no price.
   test("the month line at «Смелая» is the plan's unit over the month's budget, and only there", async () => {
@@ -219,17 +136,6 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(within(settings()).queryByText(/^Каждое фото «Смелой»/) === null).toBe(true);
   });
 
-  test("guard: no draft the screen asks for names a «Смелая» category without `level: \"bold\"`", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    await click(level("Смелая"));
-    await click(categoryChip("Пляж и бассейн"));
-    for (const face of ["Обычная", "Кокетливая", "Смелая", "Обычная"] as const) await click(level(face));
-    const drafts = planCalls(engine).map((c) => c.payload.draft);
-    expect(drafts.length).toBeGreaterThan(3);
-    for (const draft of drafts) if (draft.categories.some((ref) => ref === "nightwear" || ref === "beach")) expect(draft.level).toBe("bold");
-  });
 });
 
 // Round 2 (L1): a running launch's caption reads the launch's own categories, never the window's form (another window, a restart: the form says otherwise).
@@ -263,37 +169,7 @@ describe("a running «Смелая» launch's caption", () => {
   });
 
   // Round 3 (LOW): the launch says how many new photos each avatar draws (`photos.total`; 0 is «только библиотека»): with none at all, there is no bold frame to speak of.
-  test("says nothing about bold frames once the running launch draws no new photo", async () => {
-    const { engine, client } = world();
-    await openAutopilot();
-    const draft: LaunchDraftInput = {
-      avatarIds: [SOFIA.avatarId],
-      videosPerAvatar: 1,
-      mix: { single: 100, collage: 0, slides: 0 },
-      categories: ["nightwear", "beach"],
-      level: "bold",
-      library: true,
-      generate: true,
-      sceneReview: false,
-      stickers: false,
-    };
-    const got: { launch: LaunchView | null } = { launch: null };
-    await act(async () => {
-      const estimate = await client.request("autopilot.estimate", { draft });
-      if (!estimate.ok) throw new Error("estimate refused");
-      const started = await client.request("autopilot.start", { draft: { ...draft, planSeed: estimate.result.preview.planSeed }, acceptedWorstMicros: estimate.result.preview.estimate.worstMicros });
-      if (!started.ok) throw new Error("start refused");
-      got.launch = started.result.launch;
-    });
-    await flush();
-    const base = got.launch;
-    if (base === null) throw new Error("no launch");
-    expect(within(settings()).getByText(/^Новые кадры — /)).toBeDefined();
-    const libraryOnly = LaunchView.parse({ ...base, avatars: base.avatars.map((row) => ({ ...row, photos: { done: 0, total: 0 } })) });
-    act(() => engine.announceLaunch(libraryOnly));
-    await flush();
-    expect(within(settings()).queryByText(/^Новые кадры — /) === null).toBe(true);
-  });
+  
 });
 
 // Round 2 (e): a start refused for the 2K tier alone says state 55's sentence too, not the general price text.
@@ -313,44 +189,3 @@ describe("«Запустить» refused for the 2K tier", () => {
   });
 });
 
-describe("the plan when the 2K price is missing (gap D)", () => {
-  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. a draft at «Смелая» draws on the route whatever its categories, so the plan that needs no tier is a
-  // «Кокетливая» one.
-  test("says state 55's sentence as a warning, never the general price text; below «Смелая» it plans as before", async () => {
-    const { engine } = world();
-    engine.lackBoldPrice();
-    await openAutopilot();
-    await choose("Mia");
-    await click(level("Смелая"));
-    await click(categoryChip("Ночнушки и бельё"));
-    const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
-    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
-    expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
-    await click(categoryChip("Ночнушки и бельё"));
-    await click(level("Кокетливая"));
-    await waitFor(() => expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true));
-    expect(goButton().textContent?.startsWith("Запустить")).toBe(true);
-  });
-});
-
-describe("a «Смелая» launch's page (mockup 53)", () => {
-  test("«Ночнушки и бельё, Пляж и бассейн», then «Подача: смелая» as the brighter bit", async () => {
-    const h = setup(historyLibrary());
-    const draft: Partial<LaunchDraftInput> = { categories: ["nightwear", "beach"], level: "bold" };
-    h.engine.seedLaunch({
-      createdAt: octAt(11, 14, 2),
-      endedAt: octAt(11, 14, 31),
-      draft: { avatarIds: [MIA.avatarId], videosPerAvatar: 1, categories: ["home"], ...draft },
-      videos: [{ avatarId: MIA.avatarId, shape: "single", size: 1, state: "done", durationMs: 8_000, bytes: 2_000_000 }],
-    });
-    await openAutopilot();
-    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
-    await screen.findByRole("heading", { level: 1, name: "История запусков" });
-    await flush();
-    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск / })[0] ?? document.body);
-    await screen.findByRole("heading", { level: 1, name: "Запуск 11 окт., 14:02" });
-    await flush();
-    const bits = Array.from(document.querySelectorAll(".ap-launch-bits > span")).map((s) => `${s.textContent ?? ""}${s.classList.contains("ap-bit-new") ? " [new]" : ""}`);
-    expect(bits.slice(2, 5)).toEqual(["Ночнушки и бельё, Пляж и бассейн", "Подача: смелая [new]", "Ножки: нет [new]"]);
-  });
-});

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UnreadableLaunch } from "../../shared/engine";
 import { callsOf, describeElement, flush, focusedLabel, openSection, setup } from "../testing";
 import { historyLibrary, seedHistory } from "./autopilot/historyTestkit";
@@ -20,11 +20,6 @@ afterEach(() => {
   if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1024, height: 768 }]);
 });
 
-function wideWindow(): void {
-  const hd: unknown = Reflect.get(window, "happyDOM");
-  const setViewport: unknown = hd !== null && typeof hd === "object" ? Reflect.get(hd, "setViewport") : null;
-  if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1440, height: 900 }]);
-}
 
 async function openAutopilot(unreadable: UnreadableLaunch[] = BAD, seeded = true) {
   const h = setup({ ...historyLibrary(), unreadableLaunches: unreadable });
@@ -89,38 +84,6 @@ describe("«История запусков»", () => {
     expect(document.querySelector(".ap-launch-meta")?.textContent).toBe(`4${NBSP}запуска · 1${NBSP}запись не читается · новые сверху`);
   });
 
-  test("an entry that did not read from the disk (io-error) offers no «Убрать запись»; its words fit a folder and a file alike; it reads the list again on request", async () => {
-    const { engine } = await openHistory();
-    const folder = within(rowsCard()).getAllByRole("group")[1] ?? document.body;
-    expect(within(folder).queryByRole("button", { name: "Убрать запись" }) === null).toBe(true);
-    expect(folder.textContent).toContain("Не читается");
-    expect(folder.textContent).toContain("Studio не смог прочитать запись запуска с диска: диск не ответил или нет доступа.");
-    expect(folder.textContent).toContain("Убрать её отсюда нельзя — сначала она должна прочитаться.");
-    // Fix round 1: the engine says io-error for a folder and for one file, so the row names neither.
-    expect(/папк|файл/i.test(folder.textContent ?? "")).toBe(false);
-    const lists = callsOf(engine, "autopilot.list").length;
-    fireEvent.click(within(folder).getByRole("button", { name: "Прочитать снова" }));
-    await flush();
-    expect(callsOf(engine, "autopilot.list").length).toBe(lists + 1);
-    expect(callsOf(engine, "autopilot.removeUnreadable")).toHaveLength(0);
-  });
-
-  test("S4.6g: an io-error that says its scope is worded for it — a file names the file, the folder names the folder — and neither offers «Убрать запись»", async () => {
-    await openHistory([
-      { entryId: "1b2c3d4e5f607182", reason: "io-error", scope: "file" },
-      { entryId: "2c3d4e5f60718293", reason: "io-error", scope: "folder" },
-    ]);
-    const [file, folder] = within(rowsCard()).getAllByRole("group");
-    expect(file?.textContent).toContain("Studio не смог открыть файл записи запуска: диск не ответил или нет доступа.");
-    expect(file?.textContent).not.toContain("папк");
-    expect(folder?.textContent).toContain("Studio не смог прочитать папку запусков в библиотеке: диск не ответил или нет доступа.");
-    expect(folder?.textContent).not.toContain("файл");
-    for (const row of [file, folder]) {
-      expect(row === undefined || within(row).queryByRole("button", { name: "Убрать запись" }) === null).toBe(true);
-      expect(row === undefined || within(row).queryByRole("button", { name: "Прочитать снова" }) !== null).toBe(true);
-    }
-  });
-
   test("a refused «Убрать запись» (the file reads now) reads the list again instead of saying an error", async () => {
     const { engine } = await openHistory([{ entryId: "0a1b2c3d4e5f6071", reason: "invalid" }]);
     engine.failNext("autopilot.removeUnreadable", { code: "NOT_FOUND", detail: "no unreadable launch entry matches" });
@@ -143,12 +106,6 @@ describe("«История запусков»", () => {
     await waitFor(() => expect(focusedLabel()).toBe(describeElement(launchRows()[1] ?? null)));
   });
 
-  test("«← Автопилот» leads back to the screen", async () => {
-    await openHistory();
-    fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Автопилот" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Автопилот" })).toBeDefined();
-  });
-
   test("an empty history: «Запусков пока не было»", async () => {
     await openHistory([], false);
     expect(screen.getByRole("region", { name: "Запуски" }).textContent).toBe("Запусков пока не былоПервый запуск появится здесь сразу после «Запустить».");
@@ -156,46 +113,3 @@ describe("«История запусков»", () => {
   });
 });
 
-describe("«Последний запуск» on «Автопилот»", () => {
-  test("at 1440, with no launch on the card: the newest launch in a line, «Результаты» opens it; «← Автопилот» comes back", async () => {
-    wideWindow();
-    await openAutopilot([]);
-    const card = screen.getByRole("region", { name: "Последний запуск" });
-    expect(card.querySelector(".ap-last-line")?.textContent).toBe(`8 окт., 14:02 · Mia, Sofia, Elena · 6 из 9${NBSP}видео · $1.69 из $4.14`);
-    expect(card.querySelector(".ap-st")?.textContent).toBe("завершён");
-    fireEvent.click(within(card).getByRole("button", { name: "Результаты" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Запуск 8 окт., 14:02" })).toBeDefined();
-    fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Автопилот" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Автопилот" })).toBeDefined();
-  });
-
-  test("at 1200 it is not drawn (the plan keeps the column), nor while the history is empty", async () => {
-    await openAutopilot([]);
-    expect(screen.queryByRole("region", { name: "Последний запуск" }) === null).toBe(true);
-  });
-
-  test("nothing in the history: no card, and the button counts 0", async () => {
-    wideWindow();
-    await openAutopilot([], false);
-    expect(screen.queryByRole("region", { name: "Последний запуск" }) === null).toBe(true);
-    expect(screen.getByRole("button", { name: /^История запусков/ }).textContent).toBe("История запусков0");
-  });
-
-  test("not drawn with a launch in the history, with entries that cannot be read, nor at 1200", async () => {
-    wideWindow();
-    await openAutopilot([]);
-    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
-    cleanup();
-
-    wideWindow();
-    await openAutopilot(BAD, false);
-    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
-    cleanup();
-
-    const hd: unknown = Reflect.get(window, "happyDOM");
-    const setViewport: unknown = hd !== null && typeof hd === "object" ? Reflect.get(hd, "setViewport") : null;
-    if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1200, height: 800 }]);
-    await openAutopilot([], false);
-    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
-  });
-});

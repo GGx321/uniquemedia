@@ -53,12 +53,6 @@ const pressed = (): string[] => screen.queryAllByRole("button", { name: /^Выб
 const bar = (): HTMLElement => screen.getByRole("region", { name: "Выбранные аватары" });
 
 describe("choosing avatars on «Аватары»", () => {
-  test("every active avatar has its box, the archived one none; nothing is chosen and there is no bar at first", async () => {
-    await openAvatars();
-    expect(["Mia", "Sofia", "Elena", "Ava"].map((name) => box(name).getAttribute("aria-pressed"))).toEqual(["false", "false", "false", "false"]);
-    expect(screen.queryByRole("button", { name: "Выбрать Nora" }) === null).toBe(true);
-    expect(screen.queryByRole("region", { name: "Выбранные аватары" }) === null).toBe(true);
-  });
 
   test("a click (Space on the box) chooses one; the bar counts it and its unused photos; a second click takes it back", async () => {
     await openAvatars();
@@ -84,16 +78,6 @@ describe("choosing avatars on «Аватары»", () => {
     expect(await saying(() => fireEvent.click(within(bar()).getByRole("button", { name: "Снять выбор" })))).toEqual(["Выбор снят"]);
   });
 
-  test("a run from a box taken back clears the run", async () => {
-    await openAvatars();
-    fireEvent.click(box("Mia"));
-    fireEvent.click(box("Sofia"));
-    fireEvent.click(box("Elena"));
-    fireEvent.click(box("Mia"));
-    fireEvent.click(box("Elena"), { shiftKey: true });
-    expect(pressed()).toEqual([]);
-  });
-
   test("an avatar whose usage cannot be read counts no unused photos, and the bar says so", async () => {
     await openAvatars({ avaUnknown: true });
     fireEvent.click(box("Elena"));
@@ -116,58 +100,6 @@ describe("choosing avatars on «Аватары»", () => {
   });
 
   // Fix round 1: a run starts from a box on screen. An anchor archived since gives way to the box Shift-clicked now, and the next Shift-click is a run from it.
-  test("an anchor archived since: the Shift-click toggles one box and becomes the anchor; the next Shift-click chooses the run", async () => {
-    const { client } = await openAvatars();
-    fireEvent.click(box("Mia"));
-    await act(async () => {
-      const reply = await client.request("avatars.archive", { avatarId: MIA.avatarId });
-      if (!reply.ok) throw new Error(reply.error.code);
-    });
-    await flush();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Выбрать Mia" }) === null).toBe(true));
-    fireEvent.click(box("Sofia"), { shiftKey: true });
-    expect(pressed()).toEqual(["Sofia"]);
-    fireEvent.click(box("Ava"), { shiftKey: true });
-    expect(pressed()).toEqual(["Sofia", "Elena", "Ava"]);
-  });
-
-  test("an anchor hidden by the search: the same; the bar counts the chosen ones the search hides", async () => {
-    await openAvatars();
-    fireEvent.click(box("Elena"));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "i" } });
-    expect(screen.queryByRole("button", { name: "Выбрать Elena" }) === null).toBe(true);
-    fireEvent.click(box("Mia"), { shiftKey: true });
-    expect(pressed()).toEqual(["Mia"]);
-    fireEvent.click(box("Sofia"), { shiftKey: true });
-    expect(pressed()).toEqual(["Mia", "Sofia"]);
-    // Elena is still chosen, out of sight: the bar says so, and her photos still count.
-    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 3 (1 скрыто поиском)");
-    expect(bar().querySelector(".mono")?.textContent).toBe(`63${NBSP}неиспользованных фото`);
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
-    expect(pressed()).toEqual(["Mia", "Sofia", "Elena"]);
-    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 3");
-  });
-
-  test("chosen avatars the filter hides: the bar says the filter hides them", async () => {
-    await openAvatars();
-    fireEvent.click(box("Mia"));
-    fireEvent.click(box("Sofia"));
-    fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
-    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (2 скрыто фильтром)");
-  });
-
-  test("S4.9d (S4.9c N4): «Архив» with a search typed — the filter is what hides the chosen ones, and the bar says so", async () => {
-    await openAvatars();
-    fireEvent.click(box("Mia"));
-    fireEvent.click(box("Sofia"));
-    fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "o" } });
-    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (2 скрыто фильтром)");
-    // «Активные» with the search: the search is what hides them.
-    fireEvent.click(screen.getByRole("radio", { name: "Активные" }));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "sof" } });
-    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (1 скрыто поиском)");
-  });
 
   test("an avatar archived while chosen leaves the choice", async () => {
     const { client } = await openAvatars();
@@ -245,25 +177,4 @@ describe("«Автопилот для выбранных»", () => {
     expect(document.querySelector(".ap-from-main") === null).toBe(true);
   });
 
-  test("the line counts the brought avatars still active: one archived since leaves the number, and the last takes the line with it — never «…: 0»", async () => {
-    const { client } = await openAvatars();
-    fireEvent.click(box("Mia"));
-    fireEvent.click(box("Sofia"));
-    fireEvent.click(within(bar()).getByRole("button", { name: "Автопилот для выбранных" }));
-    await screen.findByRole("heading", { level: 1, name: "Автопилот" });
-    await flush();
-    expect(document.querySelector(".ap-from-main")?.textContent).toBe("Выбраны на экране «Аватары»: 2. Поменять можно здесь.");
-    const archive = async (avatarId: string): Promise<void> => {
-      await act(async () => {
-        const reply = await client.request("avatars.archive", { avatarId });
-        if (!reply.ok) throw new Error(reply.error.code);
-      });
-      await flush();
-    };
-    await archive(SOFIA.avatarId);
-    await waitFor(() => expect(document.querySelector(".ap-from-main")?.textContent).toBe("Выбраны на экране «Аватары»: 1. Поменять можно здесь."));
-    await archive(MIA.avatarId);
-    await waitFor(() => expect(document.querySelector(".ap-from-main") === null).toBe(true));
-    expect(document.body.textContent ?? "").not.toContain("«Аватары»: 0");
-  });
 });

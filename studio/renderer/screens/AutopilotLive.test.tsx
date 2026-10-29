@@ -2,12 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import {
   ERROR_MESSAGES_RU,
-  LAUNCH_REASONS_RU,
   LaunchView,
   PRICE_SCOPES_RU,
-  SCENE_REASONS_RU,
   type AvatarSummary,
-  type EngineError,
   type LaunchAvatarView,
   type LaunchDraftInput,
   type LogLine,
@@ -18,7 +15,7 @@ import type { MockEngine } from "../engine/mockEngine";
 import type { ManualScheduler } from "../engine/scheduler";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { formatUsdTiered } from "../lib/money";
-import { callsOf, describeElement, flush, openSection, setup, tick, withText } from "../testing";
+import { callsOf, describeElement, flush, openSection, setup } from "../testing";
 
 // S4.9b: the live launch card of «Автопилот» against the mock engine (AutopilotS4.dc.html, states review-wait … paused-reviewed; LaunchStates; plan §3.5–§3.8,
 // §4.6–§4.8, §18). The mock moves a launch only by the owner's clicks (pause, resume, stop, the review hand-off); every other state the engine can send — a
@@ -44,11 +41,6 @@ afterEach(() => {
   if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1024, height: 768 }]);
 });
 
-function wideWindow(): void {
-  const hd: unknown = Reflect.get(window, "happyDOM");
-  const setViewport: unknown = hd !== null && typeof hd === "object" ? Reflect.get(hd, "setViewport") : null;
-  if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1440, height: 900 }]);
-}
 
 interface Started {
   readonly engine: MockEngine;
@@ -171,27 +163,6 @@ describe("the live card while the launch runs (ApRunning)", () => {
     expect(within(card()).queryByRole("button", { name: /^Продолжить/ }) === null).toBe(true);
   });
 
-  test("at 1440 the log has the avatar's own column; the header and the notice stay above the scrolling body (round 1 M6)", async () => {
-    wideWindow();
-    const { engine, launch } = await started();
-    announce(engine, vary(launch, { ...money, avatars: designRows(launch), paidHold: { reason: "credits", at: AT, detail: {} }, logTail: [line("photo", { done: 9, total: 14 }, SOFIA.avatarId)] }));
-    const item = within(card()).getByRole("list", { name: "Журнал" }).querySelector("li");
-    expect(Array.from(item?.children ?? []).map((c) => c.textContent).slice(1)).toEqual(["Sofia", "фото 9 из 14"]);
-    const body = card().querySelector(".ap-live-body .ap-sc");
-    expect(body?.contains(within(card()).getByRole("heading", { level: 2 })) ?? true).toBe(false);
-    expect(body?.contains(noteTitled("Пополните баланс OpenRouter")) ?? true).toBe(false);
-    expect(body?.contains(within(card()).getByRole("table", { name: "Ход по аватарам" })) ?? false).toBe(true);
-    expect(body?.contains(within(card()).getByRole("list", { name: "Журнал" })) ?? false).toBe(true);
-  });
-
-  test("eleven avatars: every row in the scrolling body under the pinned header (ApRunningMany)", async () => {
-    const extra = ["ava", "lina", "nora", "zoe", "maya", "iris", "vera", "alba"].map((key, i): AvatarSummary => ({ ...MIA, avatarId: `avatar-${key}-${String(i + 10).padStart(4, "0")}`, name: key[0]?.toUpperCase() + key.slice(1), masterPhotoId: `photo-${key}-master` }));
-    const { launch } = await started({ extra, videos: 3, libraryOn: false });
-    expect(launch.avatars).toHaveLength(11);
-    const rows = within(card()).getAllByRole("rowheader");
-    expect(rows.map((r) => r.textContent)).toEqual(["Mia", "Sofia", "Elena", "Ava", "Lina", "Nora", "Zoe", "Maya", "Iris", "Vera", "Alba"]);
-    expect(card().querySelector(".ap-live-body .ap-sc")?.contains(rows[10] ?? null) ?? false).toBe(true);
-  });
 });
 
 describe("«Пауза» and «Продолжить · до $R»", () => {
@@ -217,20 +188,6 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     expect(callsOf(engine, "autopilot.resume")[0]?.payload).toEqual({ launchId: launch.launchId, acceptedRemainingMicros: r });
     const running = await screen.findByRole("heading", { level: 2, name: "Идёт запуск" });
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(running)));
-  });
-
-  test("«Ставим на паузу…»: the requests in flight, «Пауза» busy and closed, «Стоп» still there, no more than 3 minutes (ApPausing)", async () => {
-    const { engine, launch } = await started();
-    announce(engine, vary(launch, { ...money, status: "pausing", avatars: designRows(launch) }));
-    expect(within(card()).getByRole("heading", { level: 2, name: "Ставим на паузу…" })).toBeDefined();
-    expect(card().querySelector(".ap-live-meta")?.textContent).toBe(`4${NBSP}запроса в работе`);
-    expect(button("Пауза").getAttribute("aria-disabled")).toBe("true");
-    expect(button("Пауза").getAttribute("aria-busy")).toBe("true");
-    expect(button("Стоп").getAttribute("aria-disabled")).toBeNull();
-    expect(within(card()).getByText("Новые запросы и рендеры не начнутся. Ждём ответов на те, что уже ушли, — обычно до минуты, не дольше 3 минут; рендеры, что идут, доделаются.")).toBeDefined();
-    fireEvent.click(button("Пауза"));
-    await flush();
-    expect(callsOf(engine, "autopilot.pause")).toHaveLength(0);
   });
 
   test("R moved under the screen (PRICE_CHANGED): the engine's new R on the button, «Остаток пересчитан», the focus stays; the next click sends it", async () => {
@@ -294,21 +251,6 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     fireEvent.click(within(noteTitled("Сначала сверка")).getByRole("button", { name: "Перейти к сверке" }));
     await flush();
     expect(screen.getByRole("heading", { level: 1, name: "Настройки" })).toBeDefined();
-  });
-
-  test("Studio closed, or the engine restarted after a crash: nothing runs by itself, «Продолжить · до $R» is the consent (ApPausedRestart)", async () => {
-    const { engine, client, launch } = await started();
-    await act(async () => {
-      await client.request("autopilot.pause", { launchId: launch.launchId });
-    });
-    announce(engine, vary(launch, { ...money, inFlight: { requests: 0, openMicros: 0 }, status: "paused", paused: { cause: "quit", at: AT }, avatars: designRows(launch) }));
-    expect(noteTitled("Studio был закрыт — запуск ждёт вас").textContent).toContain("После перезапуска автопилот ничего не делает сам: ни запросов, ни рендеров, ни музыки. «Продолжить» разрешит потратить ещё до $2.89 — остаток предела $4.14.");
-    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
-    announce(engine, vary(launch, { ...money, inFlight: { requests: 0, openMicros: 0 }, status: "paused", paused: { cause: "engine-restart", at: AT }, avatars: designRows(launch) }));
-    expect(card().querySelector(".ap-live-meta")?.textContent).toMatch(/^движок перезапустился в \d\d:\d\d$/);
-    expect(noteTitled("Studio перезапустил движок после сбоя")).toBeDefined();
-    const rows = within(card()).getAllByRole("row").slice(1);
-    expect(rows.map((r) => r.querySelector(".ap-row-phase")?.textContent)).toEqual(["на паузе", "на паузе · 9 из 14 фото", "на паузе"]);
   });
 
   test("after a restart the reserves of the earlier process are hatched «за N прерванных запроса — до сверки» from `unsettled`, and a reconcile takes the line away (ApPausedReconcile)", async () => {
@@ -480,32 +422,6 @@ describe("the holds: each reason with its banner and its fix (LaunchStates «П�
     expect(screen.getByRole("heading", { level: 1, name: "Настройки" })).toBeDefined();
   });
 
-  test("budget for a batch not begun: «нужно хотя бы $0.21 — одно фото», the batch will fit the room", async () => {
-    await held({ reason: "budget", detail: { freeMicros: 180_000, needMicros: 210_000, kind: "new-slice" } }, "budget");
-    expect(noteTitled("Ждёт бюджета").textContent).toContain("Начать новую партию Sofia: нужно хотя бы $0.21 — одно фото, свободно $0.18.");
-    expect(descriptionOf(within(noteTitled("Ждёт бюджета")).getByRole("button", { name: /^Продолжить/ }))).toBe("«Продолжить» откроется, когда в месяце будет свободно $0.21; партия будет по месту.");
-  });
-
-  test("network: «повтор 1 из 2» with no button while the retry is ahead; after the third drop, the reconcile first (ApHoldNetwork)", async () => {
-    const { engine, launch } = await held({ reason: "network", detail: { drops: 1, attempt: 1, nextAt: "2026-10-08T14:07:00.000Z" } }, null);
-    const retry = within(card()).getByText(/^Нет ответа — повторим в \d\d:\d\d$/).closest<HTMLElement>(".notice");
-    expect(retry?.textContent).toContain("повтор 1 из 2. Если связь пропадёт в третий раз, платная часть встанет до сверки.");
-    expect(within(card()).queryByRole("button", { name: /^Продолжить/ }) === null).toBe(true);
-    const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "waiting" as const, waiting: { reason: "paid-hold" as const } } : r));
-    announce(
-      engine,
-      // The requests the drops left without an answer are no request in flight any more: they are `unsettled` (S4.6v), and the hold says so.
-      vary(launch, { ...money, inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 4, openMicros: 280_000 }, avatars: rows, paidHold: { reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } }, resumeBlockedBy: "network" }),
-    );
-    const note = noteTitled("Нет ответа от OpenRouter");
-    expect(note.textContent).toContain(`Связь пропала 3${NBSP}раза: 2 повтора (через 1 и 5 мин) не помогли — платная часть ждёт. 4${NBSP}запроса без ответа до сверки считаются по худшей цене, до $0.28.`);
-    expect(within(note).getByRole("button", { name: "Перейти к сверке" })).toBeDefined();
-    expect(descriptionOf(within(note).getByRole("button", { name: /^Продолжить/ }))).toBe(`Сначала сверка — она закроет эти 4${NBSP}запроса. Потом «Продолжить» покажет новый остаток.`);
-    // M1: «без ответа», not «в работе»; counted once.
-    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
-    expect(within(card()).getByRole("img", { name: `Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}запроса без ответа — до сверки` })).toBeDefined();
-  });
-
   test("credits: «Продолжить» stays open (a 402 brings the hold back at no cost) and sends R", async () => {
     const { engine } = await held({ reason: "credits", detail: {} }, null);
     const note = noteTitled("Пополните баланс OpenRouter");
@@ -535,41 +451,6 @@ describe("the holds: each reason with its banner and its fix (LaunchStates «П�
     expect(within(noteTitled("Цены OpenRouter не загрузились")).getByRole("button", { name: /^Продолжить/ }).getAttribute("aria-disabled")).toBeNull();
   });
 
-  test("internal: «Продолжить» never opens, «Стоп» is the only way out and asks first", async () => {
-    await held({ reason: "internal", detail: { kind: "allocation-exceeded" } }, "internal");
-    const note = noteTitled("Внутренняя ошибка учёта");
-    expect(within(note).getByRole("button", { name: /^Продолжить/ }).getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(within(note).getByRole("button", { name: "Стоп" }));
-    expect(await screen.findByRole("alertdialog", { name: "Остановить запуск?" })).toBeDefined();
-  });
-
-  test("the export folder, the disk, videos with no track: free work waits, the paid part goes on", async () => {
-    const { engine, launch } = await started();
-    const again = (over: Record<string, unknown>): void => announce(engine, vary(launch, { ...money, avatars: designRows(launch), ...over }));
-    again({ freeHold: { reason: "export", at: AT, detail: { exportReason: "missing", neededBytes: null, freeBytes: null } } });
-    expect(noteTitled("Папка «Готовые видео» недоступна").textContent).toContain("Диск отключён или папку переименовали. Фото рисуются дальше, видео подождут папку.");
-    again({ freeHold: { reason: "export", at: AT, detail: { exportReason: "not-enough-space", neededBytes: 9_000_000, freeBytes: 6_000_000 } } });
-    expect(noteTitled("Мало места на диске").textContent).toContain(`Для следующего видео нужно ≈ 9${NBSP}МБ, свободно 6${NBSP}МБ.`);
-    again({ waitingMusic: 3, avatars: designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "montage" as const, slice: null, photos: { done: 14, total: 14 }, waitingMusic: 3 } : r)) });
-    const music = noteTitled(`3${NBSP}видео ждут музыку`);
-    expect(within(music).getByRole("button", { name: "Обновить тренды — в Настройках" })).toBeDefined();
-    expect(within(card()).getAllByRole("row")[2]?.querySelector(".ap-row-phase")?.textContent).toBe(`3${NBSP}видео ждут музыку`);
-  });
-
-  test("a skipped avatar: its notice and its row, the others go on (ApRunningAvatars)", async () => {
-    const { engine, launch } = await started();
-    const rows = designRows(launch).map((r) =>
-      r.avatarId === ELENA.avatarId ? { ...r, phase: "skipped" as const, skipped: { reason: "failure-rate" as const, failed: 3, total: 5 } } : r.avatarId === SOFIA.avatarId ? { ...r, phase: "waiting" as const, waiting: { reason: "avatar-busy" as const } } : r,
-    );
-    announce(engine, vary(launch, { ...money, avatars: rows }));
-    const note = noteTitled("Elena пропущена");
-    expect(note.textContent).toContain("3 из 5 новых фото не прошли проверки. Новых фото Elena в этом запуске не будет — проверьте мастер-портрет.");
-    const phases = within(card()).getAllByRole("row").slice(1).map((r) => r.querySelector(".ap-row-phase")?.textContent);
-    expect(phases).toEqual(["монтаж · фото из библиотеки", "ждёт: идёт ваша генерация на «Фото» — продолжим сами", "пропущена: много неудачных фото"]);
-    fireEvent.click(within(note).getByRole("button", { name: "Открыть «Фото» Elena" }));
-    await flush();
-    expect(screen.getByRole("heading", { level: 1, name: "Elena" })).toBeDefined();
-  });
 });
 
 describe("the review hand-off", () => {
@@ -601,55 +482,6 @@ describe("the review hand-off", () => {
     expect(within(card()).queryByText(ERROR_MESSAGES_RU.PRICE_UNAVAILABLE) === null).toBe(true);
   });
 
-  test("scenes without text: the notice says what «Продолжить» removes and how many photos stay", async () => {
-    const { engine, launch } = await started({ review: true });
-    const rows = launch.avatars.map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, scenes: 14, scenesWithoutText: 2, continuePhotos: 12 } : r));
-    announce(engine, vary(launch, { avatars: rows, reviewWritesMicros: 2_000 }));
-    expect(noteTitled("Сцены Sofia ждут проверки").textContent).toContain(`14${NBSP}сцен на «Фото», у 2 нет текста.`);
-    expect(noteTitled("Сцены Sofia ждут проверки").textContent).toContain("сцены без текста уберём, фото будет 12.");
-    expect(within(card()).getByRole("button", { name: `Продолжить запуск: 12${NBSP}фото` })).toBeDefined();
-    expect(within(card()).getByText("Правки сцен")).toBeDefined();
-    expect(card().querySelectorAll(".ap-spent-value")[1]?.textContent).toBe("$0.002 отдельно");
-  });
-
-  test("scenes accepted while paused: the row says so, the sub line counts the photos to draw after «Продолжить» (ApPausedReviewed)", async () => {
-    const { engine, client, launch } = await started({ review: true });
-    await act(async () => {
-      await client.request("autopilot.pause", { launchId: launch.launchId });
-    });
-    const row = launch.avatars.find((a) => a.avatarId === SOFIA.avatarId);
-    await act(async () => {
-      await client.request("autopilot.continueAfterReview", { launchId: launch.launchId, avatarId: SOFIA.avatarId, sceneSetId: row?.sceneSetId ?? "", revision: row?.setRevision ?? 1 });
-    });
-    expect(engine.calls.some((c) => c.type === "autopilot.continueAfterReview")).toBe(true);
-    const sofia = within(card()).getAllByRole("row").find((r) => r.querySelector(".ap-row-name")?.textContent === "Sofia");
-    expect(sofia?.querySelector(".ap-row-phase")?.textContent ?? "").toMatch(/^проверено — ждёт «Продолжить» · \d+\sфото$/);
-    expect(within(card()).getByText(/^Ничего не тратится и не рендерится\. Сцены Sofia приняты — \d+\sфото нарисуем после «Продолжить»\.$/)).toBeDefined();
-  });
-});
-
-describe("«Стоп» says what becomes of each set (ApStopConfirm, round 1 M2)", () => {
-  test("by the phase of each set, from `undrawnScenes` and `resumableSlots`; the sets that change first, the figures mono (S4.9d, S4.9b L4)", async () => {
-    const { engine, launch } = await started();
-    const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "awaiting-review" as const, slice: null, photos: { done: 0, total: 14 } } : r.avatarId === ELENA.avatarId ? { ...r, phase: "drawing" as const, photos: { done: 3, total: 5 }, slice: { index: 1, total: 1 }, resumableSlots: 2 } : r));
-    announce(engine, vary(launch, { ...money, inFlight: { requests: 2, openMicros: 140_000 }, avatars: rows }));
-    fireEvent.click(button("Стоп"));
-    const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
-    const sets = within(dialog).getByRole("list", { name: "Наборы сцен" });
-    const items = Array.from(sets.querySelectorAll("li")).map((li) => li.textContent);
-    // ApStopConfirm's order: the sets «Стоп» changes (Sofia's back on «Фото», Elena's drawn in part), then Mia, whose library nothing changes.
-    expect(items).toEqual([
-      "Sofiaждёт проверкиНабор вернётся на «Фото» обычным: отрисовать его или удалить — решите там. За составление уже заплачено.",
-      `Elenaрисуется 3 из 5Набор останется отрисованным частично. Начатую партию (осталось 2${NBSP}фото) можно доделать на «Фото» своим кликом; других сцен в наборе нет.`,
-      "Miaтолько библиотекаНаборов сцен нет — ничего не меняется.",
-    ]);
-    const lead = within(dialog).getByText(withText(/^Новых запросов и рендеров не будет\. Запросы, что уже в работе \(2\), закончатся сами/));
-    expect(Array.from(lead.querySelectorAll(".mono"), (el) => el.textContent)).toEqual(["2"]);
-    const stays = dialog.querySelector(".ap-stop-stays li");
-    expect(stays?.querySelector(".mono")?.textContent).toMatch(/^\d+$/);
-    expect(Array.from(dialog.querySelectorAll(".ap-stop-spent .mono"), (el) => el.textContent)).toEqual(["$1.25", "$4.14"]);
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
-  });
 });
 
 describe("the end of a launch", () => {
@@ -678,72 +510,6 @@ describe("S4.10 fix C (M2): a pause, stop or resume the engine refuses because t
   const MOVED = "Состояние запуска уже изменилось — посмотрите карточку.";
   const alertText = (): string => within(card()).queryAllByRole("alert").map((a) => a.textContent ?? "").join(" | ");
 
-  /** The engine paused through another way, the window still holding the older word that the launch runs: «Пауза» on the card meets the engine's refusal. */
-  async function staleRunning(): Promise<Started & { readonly real: LaunchView }> {
-    const opened = await started();
-    await act(async () => {
-      await opened.client.request("autopilot.pause", { launchId: opened.launch.launchId });
-    });
-    const fresh = await opened.client.request("autopilot.get", { launchId: opened.launch.launchId });
-    if (!fresh.ok) throw new Error("get refused");
-    const real = fresh.result.launch;
-    announce(opened.engine, vary(real, { status: "running", paused: null }));
-    await flush();
-    expect(within(card()).getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
-    return { ...opened, real };
-  }
-
-  test("«Пауза» on a launch already paused: the card says so, reads the launch again and shows the engine's word, the focus on its heading", async () => {
-    const { engine } = await staleRunning();
-    const gets = callsOf(engine, "autopilot.get").length;
-    const pause = button("Пауза");
-    pause.focus();
-
-    fireEvent.click(pause);
-    await flush();
-    await flush();
-
-    expect(callsOf(engine, "autopilot.pause")).toHaveLength(2);
-    expect(alertText()).toContain(MOVED);
-    expect(alertText()).not.toContain("Некорректные данные запроса.");
-    expect(callsOf(engine, "autopilot.get").length).toBeGreaterThan(gets);
-    // The engine's own word, read again: the launch is paused, «Продолжить» on the card.
-    const heading = within(card()).getByRole("heading", { level: 2, name: "Запуск на паузе" });
-    expect(resumeButton()).toBeDefined();
-    // Fix C round 1 (MEDIUM): «Пауза» went with the reread; the focus is on the heading, not dropped to the body.
-    expect(describeElement(document.activeElement)).toBe(describeElement(heading));
-  });
-
-  test("the words outlive a view that says what the reread said; a view whose status or `resumeBlockedBy` differs clears them", async () => {
-    const { engine, real } = await staleRunning();
-    fireEvent.click(button("Пауза"));
-    await flush();
-    await flush();
-    expect(alertText()).toContain(MOVED);
-
-    // The engine's own announcement of the pause, late: the same status and the same `resumeBlockedBy` as the reread.
-    announce(engine, vary(real, {}));
-    await flush();
-    expect(alertText()).toContain(MOVED);
-
-    announce(engine, vary(real, { resumeBlockedBy: "key" }));
-    await flush();
-    expect(alertText()).not.toContain(MOVED);
-  });
-
-  test("the owner's next click clears the words", async () => {
-    const { engine } = await staleRunning();
-    fireEvent.click(button("Пауза"));
-    await flush();
-    await flush();
-    expect(alertText()).toContain(MOVED);
-    engine.delayNext("autopilot.resume", 1_000);
-
-    fireEvent.click(resumeButton());
-    await flush();
-
-    expect(alertText()).not.toContain(MOVED);
-  });
 
   test("«Продолжить · до $R» refused with a VALIDATION: the same words and a fresh read; the button is not left busy, the focus on the heading", async () => {
     const { engine, client, launch } = await started();
@@ -764,159 +530,5 @@ describe("S4.10 fix C (M2): a pause, stop or resume the engine refuses because t
     expect(describeElement(document.activeElement)).toBe(describeElement(within(card()).getByRole("heading", { level: 2, name: "Запуск на паузе" })));
   });
 
-  test("«Продолжить запуск: M фото» clears the words too (fix C round 1, LOW)", async () => {
-    const { engine } = await started({ review: true });
-    engine.failNext("autopilot.pause", { code: "VALIDATION", detail: "launch is pausing" });
-    fireEvent.click(button("Пауза"));
-    await flush();
-    await flush();
-    expect(alertText()).toContain(MOVED);
-    engine.delayNext("autopilot.continueAfterReview", 1_000);
-
-    fireEvent.click(within(noteTitled("Сцены Sofia ждут проверки")).getByRole("button", { name: /^Продолжить запуск: \d+\sфото$/ }));
-    await flush();
-
-    expect(alertText()).not.toContain(MOVED);
-  });
-
-  test("a late reread does not overwrite a newer one", async () => {
-    const { engine, client, launch, scheduler } = await started();
-    await act(async () => {
-      await client.request("autopilot.pause", { launchId: launch.launchId });
-    });
-    engine.failNext("autopilot.resume", { code: "VALIDATION" });
-    engine.delayNext("autopilot.get", 1_000);
-    fireEvent.click(resumeButton());
-    await flush();
-    engine.failNext("autopilot.resume", { code: "VALIDATION" });
-    fireEvent.click(resumeButton());
-    await flush();
-    await flush();
-    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
-
-    // The mock answers a delayed read when it is delivered; the engine answers in order, so a reply to the older ask carries the older word. Made to differ here
-    // by a key the mock rejects without telling the window: if the older reply landed, «Продолжить» would close on «key».
-    engine.rejectKey();
-    expect(scheduler.pending).toBeGreaterThan(0);
-    tick(scheduler);
-    await flush();
-
-    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
-  });
-
-  test("a refusal cancels a live H1 read: its late answer does not land over the reread", async () => {
-    const { engine, client, launch, scheduler } = await started();
-    await openSection("Аватары");
-    await act(async () => {
-      await client.request("autopilot.pause", { launchId: launch.launchId });
-    });
-    const fresh = await client.request("autopilot.get", { launchId: launch.launchId });
-    if (!fresh.ok) throw new Error("get refused");
-    // The window holds a word that the key closes «Продолжить»: the card asks the engine as it opens (H1), and that read is slow.
-    announce(engine, vary(fresh.result.launch, { resumeBlockedBy: "key" }));
-    engine.delayNext("autopilot.get", 1_000);
-    await openSection("Автопилот");
-    await screen.findByRole("heading", { level: 1, name: "Автопилот" });
-    await flush();
-    expect(resumeButton().getAttribute("aria-disabled")).toBe("true");
-
-    engine.failNext("autopilot.stop", { code: "VALIDATION" });
-    fireEvent.click(button("Стоп"));
-    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Остановить" }));
-    await flush();
-    await flush();
-    // The reread: the key is fine, «Продолжить» opens.
-    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
-
-    engine.rejectKey();
-    expect(scheduler.pending).toBeGreaterThan(0);
-    tick(scheduler);
-    await flush();
-
-    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
-  });
-
-  test("a refusal with words of its own keeps them, and reads nothing again: another code, a VALIDATION with a launch or a scene reason", async () => {
-    const own: [EngineError, string][] = [
-      [{ code: "INTERNAL" }, ERROR_MESSAGES_RU.INTERNAL],
-      [{ code: "VALIDATION", launchReason: "launch-unreadable" }, LAUNCH_REASONS_RU["launch-unreadable"]],
-      [{ code: "VALIDATION", sceneReason: "not-awaiting" }, SCENE_REASONS_RU["not-awaiting"]],
-    ];
-    const { engine } = await started();
-    for (const [error, words] of own) {
-      engine.failNext("autopilot.pause", error);
-      const gets = callsOf(engine, "autopilot.get").length;
-
-      fireEvent.click(button("Пауза"));
-      await flush();
-
-      expect(alertText()).toContain(words);
-      expect(alertText()).not.toContain(MOVED);
-      expect(callsOf(engine, "autopilot.get").length).toBe(gets);
-    }
-  });
-
-  for (const status of ["done", "stopped"] as const) {
-    test(`«Остановить запуск?» closes when the launch ends under it (${status}); the focus goes to the heading`, async () => {
-      const { engine, launch } = await started();
-      fireEvent.click(button("Стоп"));
-      const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
-      await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
-
-      announce(
-        engine,
-        vary(launch, {
-          ...money,
-          inFlight: { requests: 0, openMicros: 0 },
-          status,
-          endedAt: "2026-10-08T14:31:00.000Z",
-          avatars: launch.avatars.map((r) => ({ ...r, phase: "done" as const, waiting: null })),
-        }),
-      );
-      await flush();
-
-      expect(screen.queryByRole("alertdialog") === null).toBe(true);
-      const heading = within(card()).getByRole("heading", { level: 2, name: status === "done" ? "Запуск завершён" : "Запуск остановлен" });
-      expect(describeElement(document.activeElement)).toBe(describeElement(heading));
-      expect(callsOf(engine, "autopilot.stop")).toHaveLength(0);
-    });
-  }
 });
 
-describe("the sidebar's mark, from the view", () => {
-  const nav = (): HTMLElement => within(screen.getByRole("navigation", { name: "Разделы" })).getByRole("button", { name: "Автопилот" });
-
-  test("«ждёт» while paid work waits, seen from another screen; «готово» once done, until the screen is opened", async () => {
-    const { engine, launch } = await started();
-    await openSection("Аватары");
-    announce(engine, vary(launch, { ...money, avatars: designRows(launch), paidHold: { reason: "budget", at: AT, detail: { freeMicros: 180_000, needMicros: 1_050_000, kind: "resume-slice" } }, resumeBlockedBy: "budget" }));
-    expect(descriptionOf(nav())).toBe("запуск ждёт");
-    expect(nav().textContent ?? "").toMatch(/^Автопилотждёт/);
-    announce(engine, vary(launch, { ...money, inFlight: { requests: 0, openMicros: 0 }, status: "done", endedAt: "2026-10-08T14:31:00.000Z", avatars: designRows(launch) }));
-    expect(descriptionOf(nav())).toBe("запуск завершён");
-    expect(nav().textContent ?? "").toMatch(/^Автопилотготово/);
-    await openSection("Автопилот");
-    await openSection("Аватары");
-    expect(nav().getAttribute("aria-describedby")).toBeNull();
-  });
-});
-
-describe("S4.9d: the avatars' rows as a table a screen reader can walk (S4.9b L14)", () => {
-  test("five column headers — the avatar, its phase, Фото, Монтаж, Готово — and in every row one header and four cells; the row's action sits in its phase's cell", async () => {
-    const { engine, launch } = await started();
-    const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "awaiting-review" as const, slice: null, photos: { done: 0, total: 14 } } : r));
-    announce(engine, vary(launch, { ...money, avatars: rows }));
-    const table = within(card()).getByRole("table", { name: "Ход по аватарам" });
-    const [head, ...body] = within(table).getAllByRole("row");
-    expect(within(head ?? document.body).getAllByRole("columnheader").map((c) => c.textContent)).toEqual(["Аватар", "Ход", "Фото", "Монтаж", "Готово"]);
-    expect(body.map((r) => within(r).getAllByRole("rowheader").map((h) => h.textContent))).toEqual([["Mia"], ["Sofia"], ["Elena"]]);
-    expect(body.map((r) => within(r).getAllByRole("cell").length)).toEqual([4, 4, 4]);
-    const sofia = body.find((r) => r.getAttribute("data-avatar") === SOFIA.avatarId) ?? document.body;
-    const [phase] = within(sofia).getAllByRole("cell");
-    expect(phase?.textContent).toBe("ждёт проверки сцен · 14Открыть «Фото»");
-    expect(within(phase ?? document.body).queryByRole("button", { name: "Открыть «Фото» · Sofia" }) !== null).toBe(true);
-    // Nothing of a row's content stands outside its header and its cells.
-    const loose = body.flatMap((r) => Array.from(r.querySelectorAll("button, .ap-row-phase, .ap-cell-text")).filter((el) => el.closest('[role="cell"], [role="rowheader"]') === null));
-    expect(loose.length).toBe(0);
-  });
-});

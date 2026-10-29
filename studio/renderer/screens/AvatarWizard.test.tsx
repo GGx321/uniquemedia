@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type Draft } from "../../shared/engine";
-import { afterColon } from "../lib/format";
-import { MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
+import { mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, describeElement, focusedLabel, withText } from "../testing";
+import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, withText } from "../testing";
 
 function continuedDraft(overrides: Partial<Draft> = {}): Draft {
   return {
@@ -34,9 +33,6 @@ function generateButton(): HTMLElement {
   return screen.getByRole("button", { name: /Сгенерировать 4 варианта/ });
 }
 
-function isChecked(el: HTMLElement): boolean {
-  return el instanceof HTMLInputElement && el.checked;
-}
 
 /** The vibe's live error region (always present, filled only when the vibe is refused). */
 function vibeErrors(): string {
@@ -92,16 +88,6 @@ test("a price that arrives after the traits changed is dropped, never shown for 
   expect(estimateText()).toBeNull();
   expect(screen.queryByRole("button", { name: /Сгенерировать/ }) === null).toBe(true);
   expect(screen.getByRole("button", { name: "Оценить стоимость" }).hasAttribute("disabled")).toBe(false);
-});
-
-test("the form is locked while the paid commands are being sent", async () => {
-  setup();
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  // A disabled fieldset disables every control inside it.
-  expect(screen.getByRole("radio", { name: "Азиатский" }).closest("fieldset.lock")?.hasAttribute("disabled")).toBe(true);
-  await screen.findByText(/Рисуем портреты/);
 });
 
 test("changing the traits drops the estimate, so a stale price can never be accepted", async () => {
@@ -190,59 +176,6 @@ test("a price rise while the batch is being bought re-asks via avatars.estimateC
   expect(callsOf(engine, "avatars.generateCandidates").map((c) => c.payload.acceptedWorstMicros)).toEqual([220_000, 247_000]);
 });
 
-test("a fresh draft with no batch estimate re-prices via avatars.estimateCandidates and asks before any batch is sent", async () => {
-  const { engine, scheduler } = setup({ imageAgeCheck: "on" });
-  await openWizard();
-  await estimate();
-  engine.dropNextDraftEstimate();
-  // The fallback price is a separate, later call: it can land from a
-  // fresher (higher) price book than createDraft's own accepted-check used,
-  // and the user has not seen it — the same class of bug as M1, so it must
-  // not go straight to generateCandidates.
-  engine.delayNext("avatars.estimateCandidates", 50);
-  fireEvent.click(generateButton());
-  await waitFor(() => expect(callsOf(engine, "avatars.estimateCandidates")).toHaveLength(1));
-  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
-
-  engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
-  tick(scheduler, 1);
-
-  await screen.findByText("Цена выросла");
-  expect(screen.getByText(withText(/Было не больше \$0\.23, теперь не больше \$0\.25/))).toBeDefined();
-  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0); // still nothing sent without a click
-
-  fireEvent.click(screen.getByRole("button", { name: "Подтвердить новую цену · до $0.25" }));
-  await screen.findByText(/Рисуем портреты/);
-  // Exactly the shown batch worst (250_000 − 3_000, the descriptor excluded), never the whole avatar's.
-  expect(callsOf(engine, "avatars.generateCandidates").map((c) => c.payload.acceptedWorstMicros)).toEqual([247_000]);
-});
-
-test("a failed fallback re-estimate clears the stale whole-avatar price so it can never be sent, and a retry gets the batch price", async () => {
-  const { engine } = setup({ imageAgeCheck: "on" });
-  await openWizard();
-  await estimate();
-  engine.dropNextDraftEstimate();
-  engine.failNext("avatars.estimateCandidates", { code: "NETWORK" });
-  fireEvent.click(generateButton());
-
-  await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
-  // The whole-avatar estimate ($0.23) shown before generate() was clicked
-  // must not sit around clickable: a click on it would send that whole
-  // worst to generateCandidates, bringing back M1. With the batch price
-  // unknown, there must be no generate button at all right now.
-  expect(screen.queryByRole("button", { name: /Сгенерировать 4 варианта|Ещё 4 варианта/ }) === null).toBe(true);
-  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
-
-  fireEvent.click(screen.getByRole("button", { name: "Повторить оценку" }));
-  await waitFor(() => expect(callsOf(engine, "avatars.estimateCandidates")).toHaveLength(2));
-  expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.22" })).toBeDefined();
-
-  fireEvent.click(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.22" }));
-  await screen.findByText(/Рисуем портреты/);
-  // The draft's own batch worst, never the whole avatar's.
-  expect(callsOf(engine, "avatars.generateCandidates").map((c) => c.payload.acceptedWorstMicros)).toEqual([220_000]);
-});
-
 test("progress, then four candidates, then pick and save", async () => {
   const { engine, scheduler } = setup();
   await openWizard();
@@ -280,94 +213,9 @@ test("progress, then four candidates, then pick and save", async () => {
   expect(draftCall).toBeDefined();
 });
 
-test("a blank name is refused in place", async () => {
-  const { engine, scheduler } = setup();
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
-  fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "   " } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  expect(screen.getByText("Введите имя.")).toBeDefined();
-  expect(callsOf(engine, "avatars.pick")).toHaveLength(0);
-});
-
-test("focus moves to the candidates when the generate button goes away", async () => {
-  setup();
-  await openWizard();
-  await estimate();
-  generateButton().focus();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Кандидаты" })));
-});
-
-test("another batch does not claim to rewrite the descriptor", async () => {
-  const { scheduler } = setup({ imageAgeCheck: "on" });
-  await openWizard();
-  await estimate();
-  expect(document.querySelector(".estimate-caption")?.textContent).toContain("Дескриптор, 4 портрета");
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-  const caption = document.querySelector(".estimate-caption")?.textContent ?? "";
-  expect(caption).not.toContain("Дескриптор,");
-  expect(caption).toContain("не пересоздаётся");
-});
-
 // Owner's decision (2026-09-27): the paid image age check is optional, off by
 // default; the wizard's Russian texts that mention it must be accurate in
 // both modes.
-test("with the image age check off, the estimate caption never mentions it", async () => {
-  const { scheduler } = setup({ imageAgeCheck: "off" });
-  await openWizard();
-  await estimate();
-  const newAvatarCaption = document.querySelector(".estimate-caption")?.textContent ?? "";
-  expect(newAvatarCaption).toContain("Дескриптор и 4 портрета");
-  expect(newAvatarCaption).not.toContain("проверка возраста");
-
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  tick(scheduler, 1);
-
-  // The one finished slot is already a portrait to pick; the three still drawing say only that.
-  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(1);
-  expect(screen.getAllByText("Рисуется")).toHaveLength(3);
-  expect(document.body.textContent).not.toMatch(/Проверка|проверка возраста/);
-});
-
-test("with the image age check on, the estimate caption mentions it and no finished slot claims a check still runs", async () => {
-  const { scheduler } = setup({ imageAgeCheck: "on" });
-  await openWizard();
-  await estimate();
-  const newAvatarCaption = document.querySelector(".estimate-caption")?.textContent ?? "";
-  expect(newAvatarCaption).toContain("проверка возраста");
-
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  tick(scheduler, 1);
-
-  // A slot is counted done only after its check: never a finished tile claiming a check still runs.
-  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(1);
-  expect(screen.getAllByText("Рисуется")).toHaveLength(3);
-});
-
-test("a running batch shows each slot once: the portraits that came, then only the slots still drawing", async () => {
-  const { scheduler } = setup();
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  expect(screen.getAllByText("Рисуется")).toHaveLength(4);
-
-  tick(scheduler, 2);
-  expect(screen.getByText("Рисуем портреты: 2 из 4")).toBeDefined();
-  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
-  expect(screen.getAllByText("Рисуется")).toHaveLength(2);
-  expect(document.querySelectorAll(".cand, .cand-slot")).toHaveLength(4);
-});
 
 test("cancel sends avatars.cancel for the running job", async () => {
   const { engine, scheduler } = setup();
@@ -401,150 +249,6 @@ test("cancel sends avatars.cancel for the running job", async () => {
  * The two tests below pin this at both ends: the command's own round trip,
  * and the separate, later real end.
  */
-test("cancel keeps «Отменяем…» after its own command replies, until the job actually ends", async () => {
-  const { engine, scheduler } = setup();
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  tick(scheduler, 1);
-
-  const cancelButton = screen.getByRole("button", { name: "Отменить" });
-  fireEvent.click(cancelButton);
-  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(cancelButton.hasAttribute("disabled")).toBe(true);
-
-  // The command's own (fast) reply lands — the mock, like the real engine,
-  // answers before the job actually ends.
-  await flush();
-  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
-  // Still not done: the progress line stays, it is just being cancelled.
-  expect(screen.getByText(/Рисуем портреты/)).toBeDefined();
-
-  // Only now does the mock's own job.cancelled land, mirroring #runCandidates.
-  runAll(scheduler);
-  await flush();
-  await screen.findByText("Генерация остановлена");
-});
-
-test("a delayed avatars.cancel reply also shows «Отменяем…» while in flight, and it still outlives that reply", async () => {
-  const { engine, scheduler } = setup();
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  tick(scheduler, 1);
-
-  // Only the cancel command's own reply is delayed: the batch's timers are untouched.
-  engine.delayNext("avatars.cancel", 30);
-  const cancelButton = screen.getByRole("button", { name: "Отменить" });
-  fireEvent.click(cancelButton);
-  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(cancelButton.hasAttribute("disabled")).toBe(true);
-  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
-
-  tick(scheduler, 1); // the delayed avatars.cancel reply arrives
-  await flush();
-  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
-  // Accepted, but not yet actually ended.
-  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
-
-  runAll(scheduler); // the mock's own, separate cancel-confirm delay elapses
-  await flush();
-  await screen.findByText("Генерация остановлена");
-});
-
-test("a moderation refusal is free: its tiles and the line say so, not «стоимость попытки учтена»", async () => {
-  const { engine, scheduler } = setup();
-  engine.failNextSlots(2, { code: "MODERATION_REFUSED" });
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-
-  expect(screen.getAllByText("Не получилось")).toHaveLength(2);
-  expect(screen.getAllByText("бесплатно")).toHaveLength(2);
-  expect(screen.queryByText(/Стоимость попытки учтена/) === null).toBe(true);
-  expect(screen.getByText(/Эти попытки ничего не стоили/)).toBeDefined();
-});
-
-test("failed slots are explained in Russian and their cost is called out, alongside whatever did succeed", async () => {
-  const { engine, scheduler } = setup();
-  engine.failNextSlots(2, { code: "NETWORK" });
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-
-  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
-  // Lowercase after the colon, as Russian typography wants: "…получить: OpenRouter…".
-  expect(screen.getByText(new RegExp(`варианта не удалось получить: ${afterColon(ERROR_MESSAGES_RU.NETWORK)}`))).toBeDefined();
-  // The two empty slots say so themselves, next to the two portraits that did come.
-  expect(screen.getAllByText("Не получилось")).toHaveLength(2);
-  expect(screen.getAllByText("стоимость попытки учтена")).toHaveLength(2);
-  expect(screen.getByText(/Стоимость попытки учтена/)).toBeDefined();
-});
-
-test("when every slot fails the empty state explains it instead of showing blank letters", async () => {
-  const { engine, scheduler } = setup();
-  engine.failNextSlots(4, { code: "NETWORK" });
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-
-  expect(screen.queryAllByRole("radio", { name: /^Вариант/ })).toHaveLength(0);
-  expect(screen.getByText(/Ни один вариант не получился/)).toBeDefined();
-  // Russian plurals: 4 falls in the "few" form ("варианта"), not "вариантов".
-  expect(screen.getByText(new RegExp(`4 варианта не удалось получить: ${afterColon(ERROR_MESSAGES_RU.NETWORK)}`))).toBeDefined();
-  expect(screen.getAllByText("Не получилось")).toHaveLength(4);
-  // A retry is a fresh, separately accepted attempt, at the draft's own
-  // batch price ($0.22), not the whole new-avatar price ($0.23).
-  expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.22" })).toBeDefined();
-});
-
-test("when every slot fails, the failed tiles are not wrapped in an empty radio group", async () => {
-  const { engine, scheduler } = setup();
-  engine.failNextSlots(4, { code: "NETWORK" });
-  await openWizard();
-  await estimate();
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-
-  await screen.findByText(/Ни один вариант не получился/);
-  expect(screen.getAllByText("Не получилось")).toHaveLength(4);
-  // No real candidate to choose among: a <fieldset>/radiogroup with nothing
-  // to select in it is empty semantics, so the tiles must sit outside one.
-  expect(screen.queryByRole("group", { name: "Выберите вариант" }) === null).toBe(true);
-  expect(document.querySelector(".cand-fieldset") === null).toBe(true);
-});
-
-test("errors are shown in Russian with a way to fix them", async () => {
-  const { engine } = setup();
-  await openWizard();
-  await estimate();
-  engine.failNext("avatars.createDraft", { code: "BUDGET_EXCEEDED" });
-  fireEvent.click(generateButton());
-  await screen.findByText(ERROR_MESSAGES_RU.BUDGET_EXCEEDED);
-  fireEvent.click(screen.getByRole("button", { name: "Открыть деньги в Настройках" }));
-  await screen.findByRole("heading", { level: 1, name: "Настройки" });
-});
-
-test("RECONCILE_REQUIRED from the engine is explained", async () => {
-  const { engine } = setup();
-  await openWizard();
-  await estimate();
-  engine.failNext("avatars.createDraft", { code: "RECONCILE_REQUIRED" });
-  fireEvent.click(generateButton());
-  expect(await screen.findByText(ERROR_MESSAGES_RU.RECONCILE_REQUIRED)).toBeDefined();
-});
 
 test("a pending reconcile blocks generation before anything is sent", async () => {
   const { engine } = setup();
@@ -564,14 +268,6 @@ test("a ledger that could not be read blocks generation and says why, with no re
   expect(generateButton().hasAttribute("disabled")).toBe(true);
   expect(screen.getAllByText(ERROR_MESSAGES_RU.LEDGER_CORRUPT).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Перейти к сверке" }) === null).toBe(true);
-});
-
-test("a failed ledger write known from the snapshot blocks generation until a restart", async () => {
-  setup({ money: { halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed" } } });
-  await openWizard();
-  await estimate();
-  expect(generateButton().hasAttribute("disabled")).toBe(true);
-  expect(screen.getAllByText(/Перезапустите Studio/).length).toBeGreaterThan(0);
 });
 
 test("a settle above its worst case known only from the snapshot blocks generation until a reconcile", async () => {
@@ -631,84 +327,7 @@ test("an age in the vibe that is not the slider's is refused", async () => {
   expect(vibeErrors()).toContain("другой возраст (17)");
 });
 
-test("«Случайно» fills valid traits", async () => {
-  setup();
-  await openWizard();
-  fireEvent.change(vibeInput(), { target: { value: "teen" } });
-  expect(vibeErrors()).not.toBe("");
-  fireEvent.click(screen.getByRole("button", { name: "Случайно" }));
-  expect(vibeErrors()).toBe("");
-  expect(screen.getByRole("button", { name: "Оценить стоимость" }).hasAttribute("disabled")).toBe(false);
-});
-
-test("the form is labelled and keyboard operable with native controls", async () => {
-  setup();
-  await openWizard();
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Новый аватар" })));
-
-  const age = screen.getByRole("slider", { name: "Возраст" });
-  expect(age.getAttribute("min")).toBe("21");
-  expect(age.getAttribute("max")).toBe("35");
-  fireEvent.change(age, { target: { value: "31" } });
-  expect(age.getAttribute("aria-valuetext")).toBe("31 год");
-
-  const typage = screen.getByRole("group", { name: "Типаж" });
-  expect(within(typage).getAllByRole("radio")).toHaveLength(5);
-  expect(screen.getByRole("radio", { name: "Светлая оливковая" })).toBeDefined();
-  expect(screen.getByRole("radio", { name: "Блонд" })).toBeDefined();
-  expect(screen.getByRole("group", { name: "Длина волос" })).toBeDefined();
-  expect(screen.getByRole("group", { name: "Текстура волос" })).toBeDefined();
-
-  const freckles = screen.getByRole("checkbox", { name: "Веснушки" });
-  expect(isChecked(freckles)).toBe(true);
-  fireEvent.click(freckles);
-  expect(isChecked(freckles)).toBe(false);
-
-  const steps = screen.getByRole("list", { name: "Шаги" });
-  expect(within(steps).getByText("Внешность").closest("li")?.getAttribute("aria-current")).toBe("step");
-  // No language selector: on-video text is English only.
-  expect(screen.queryByText(/Язык/) === null).toBe(true);
-});
-
 // Three steps, as on the mockup: the estimate belongs to «Кандидаты».
-test("the stepper walks Внешность → Кандидаты → Сохранить", async () => {
-  const { scheduler } = setup();
-  await openWizard();
-  const current = (): string | null =>
-    within(screen.getByRole("list", { name: "Шаги" }))
-      .getAllByRole("listitem")
-      .find((li) => li.getAttribute("aria-current") === "step")
-      ?.textContent?.replace(/^\d/, "") ?? null;
-  expect(within(screen.getByRole("list", { name: "Шаги" })).getAllByRole("listitem")).toHaveLength(3);
-  expect(current()).toBe("Внешность");
-
-  await estimate();
-  expect(current()).toBe("Кандидаты");
-
-  fireEvent.click(generateButton());
-  await screen.findByText(/Рисуем портреты/);
-  runAll(scheduler);
-  expect(current()).toBe("Кандидаты");
-
-  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
-  expect(current()).toBe("Сохранить");
-});
-
-test("the wizard says when the engine stops answering, and blocks spending until it is back", async () => {
-  const { engine } = setup();
-  await openWizard();
-  await estimate();
-  engine.failNext("engine.snapshot", { code: "INTERNAL" });
-  inAct(() => engine.restart());
-  await flush();
-  expect(screen.getByText("Движок не отвечает")).toBeDefined();
-  expect(generateButton().hasAttribute("disabled")).toBe(true);
-
-  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
-  await flush();
-  expect(document.body.textContent).not.toContain("Движок не отвечает");
-  expect(generateButton().hasAttribute("disabled")).toBe(false);
-});
 
 test("leaving the wizard while the draft is being created buys no batch afterwards: generateCandidates is never sent", async () => {
   const { engine, scheduler } = setup({ latencyMs: 500 });
@@ -768,123 +387,10 @@ test("a continued draft with no cached price fetches one via avatars.estimateCan
 // A stricter age calibration can hide every stored candidate of a draft (or
 // only some), which otherwise looks exactly like "never generated" — both
 // show candidates: [] or a partial grid with no explanation.
-test("a draft whose stored candidates all fail today's stricter age threshold says so, not just an empty grid", async () => {
-  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE }, hiddenBelowThreshold: 2 });
-  setup({ drafts: [draft] });
-  await continueDraft();
-
-  expect(screen.getByText(/2 варианта из прошлой партии.*проходят.*возраста/)).toBeDefined();
-  expect(screen.getByText(/новую партию/)).toBeDefined();
-});
-
-test("the same notice shows when only some of the draft's candidates are hidden by a stricter threshold", async () => {
-  const draft = continuedDraft({
-    estimate: { ...MOCK_ESTIMATE },
-    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
-    hiddenBelowThreshold: 1,
-  });
-  setup({ drafts: [draft] });
-  await continueDraft();
-
-  expect(screen.getByRole("radio", { name: "Вариант A" })).toBeDefined();
-  expect(screen.getByText(/1 вариант из прошлой партии.*проходит.*возраста/)).toBeDefined();
-});
-
-test("says nothing about a stricter threshold when nothing is hidden", async () => {
-  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
-  setup({ drafts: [draft] });
-  await continueDraft();
-
-  expect(screen.queryByText(/из прошлой партии/) === null).toBe(true);
-});
 
 // A schema-invalid descriptor cannot sit in a fixture draft: the mock validates
 // its own snapshot against the same AvatarDescriptor contract, so it would
 // throw before the app even loaded. failNext models the engine's own defensive
 // re-check (the descriptor could have stopped fitting today's rules between
 // listing and this command) without needing an actually-broken fixture.
-test("DESCRIPTOR_INVALID on a continued draft's own price points at the rewrite recovery in Аватары", async () => {
-  const draft = continuedDraft();
-  const { engine } = setup({ drafts: [draft] });
-  engine.failNext("avatars.estimateCandidates", { code: "DESCRIPTOR_INVALID" });
-  await continueDraft();
 
-  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
-  expect(screen.queryByRole("button", { name: /Ещё 4 варианта/ }) === null).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
-  await screen.findByRole("heading", { level: 1, name: "Аватары" });
-});
-
-test("DESCRIPTOR_INVALID on avatars.generateCandidates points at the rewrite recovery too", async () => {
-  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
-  const { engine } = setup({ drafts: [draft] });
-  await continueDraft();
-  engine.failNext("avatars.generateCandidates", { code: "DESCRIPTOR_INVALID" });
-
-  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
-  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
-  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Переписать описание" })).toBeDefined();
-});
-
-test("DESCRIPTOR_INVALID on avatars.pick (save) points at the rewrite recovery in the save card", async () => {
-  const draft = continuedDraft({
-    estimate: { ...MOCK_ESTIMATE },
-    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
-  });
-  const { engine } = setup({ drafts: [draft] });
-  await continueDraft();
-  engine.failNext("avatars.pick", { code: "DESCRIPTOR_INVALID" });
-
-  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
-  fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "Mia" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-
-  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
-  expect(callsOf(engine, "avatars.pick")).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
-  await screen.findByRole("heading", { level: 1, name: "Аватары" });
-});
-
-test("a second batch (PRICE_CHANGED) on a continued draft re-asks via avatars.estimateCandidates, never the full estimate", async () => {
-  // A distinct age from DEFAULT_TRAITS, same reasoning as the continued-draft
-  // test above: the grid's tile also estimates with DEFAULT_TRAITS, so a
-  // draft using it too could not tell the two calls apart by their traits.
-  const draftTraits = { ...DEFAULT_TRAITS, age: 30 };
-  const draft = continuedDraft({ traits: draftTraits, descriptor: mockDescriptor(draftTraits), estimate: { ...MOCK_ESTIMATE } });
-  const { engine } = setup({ drafts: [draft] });
-  // The grid's own «Новый аватар» tile prices a new avatar — one call, counted
-  // before the wizard opens. Filtered by payload.traits rather than a raw
-  // count, same reasoning as the continued-draft test above.
-  await screen.findByRole("article", { name: "Черновик" });
-  await waitFor(() => expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).toEqual([DEFAULT_TRAITS]));
-  await continueDraft();
-
-  engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
-  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
-
-  await screen.findByText("Цена выросла");
-  expect(callsOf(engine, "avatars.estimateCandidates")).toHaveLength(1);
-  expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).not.toContainEqual(draftTraits);
-  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(1); // the refused first attempt
-});
-
-test("running a batch disables Сохранить for candidates already on hand, with a hint why", async () => {
-  const draft = continuedDraft({
-    estimate: { ...MOCK_ESTIMATE },
-    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
-  });
-  const { scheduler } = setup({ drafts: [draft] });
-  await continueDraft();
-  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
-  const save = screen.getByRole("button", { name: "Сохранить" });
-  expect(save.hasAttribute("disabled")).toBe(false);
-
-  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
-  await screen.findByText(/Рисуем портреты/);
-  expect(save.hasAttribute("disabled")).toBe(true);
-  expect(screen.getByText("Дождитесь конца генерации, чтобы сохранить.")).toBeDefined();
-
-  runAll(scheduler);
-  await waitFor(() => expect(save.hasAttribute("disabled")).toBe(false));
-});

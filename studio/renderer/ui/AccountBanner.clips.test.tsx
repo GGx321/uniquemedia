@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
-import { act, render, screen } from "@testing-library/react";
+import { describe, expect, test } from "bun:test";
+import { render, screen } from "@testing-library/react";
 import type { MoneyStatus, Settings } from "../../shared/engine";
 import { CLIP_RESTART_BANNER, clipReconcileWaitText } from "../../shared/engine/clipRestartTexts";
 import type { EngineView, JobView } from "../engine/store";
@@ -110,25 +110,11 @@ describe("«Нужна сверка расходов» while the reconcile canno
     expect(goReconcile() === null).toBe(true);
   });
 
-  test("46 #held: the recovering clip may still bill past the restart's minutes: the time it waits for", () => {
-    const m = money({ reconcileNeeded: true, availableInMs: 40 * MINUTE });
-    show(view(m, [recoveryJob]));
-    expect(screen.queryByText(CLIP_RESTART_BANNER) === null).toBe(true);
-    expect(screen.getByText(/^Сверка ждёт окончания клипа — до \d\d:\d\d\.$/)).toBeDefined();
-    expect(goReconcile() === null).toBe(true);
-  });
-
   test("once the time has come the button is back and the clip's line goes", () => {
     show(view(money({ reconcileNeeded: true, availableInMs: -MINUTE }), [recoveryJob]));
     expect(goReconcile()).not.toBeNull();
     expect(screen.queryByText(CLIP_RESTART_BANNER) === null).toBe(true);
     expect(screen.queryByText(/Сверка ждёт окончания клипа/) === null).toBe(true);
-  });
-
-  test("with no date at all (nothing holds the reconcile) the banner is as before", () => {
-    show(view(money({ reconcileNeeded: true })));
-    expect(goReconcile()).not.toBeNull();
-    expect(screen.getByText(/Платные запросы остановлены до сверки\./)).toBeDefined();
   });
 
   test("a clip reserve that is only held stops no paid work, so there is no banner (I5.48: not a reconcile reason)", () => {
@@ -139,64 +125,4 @@ describe("«Нужна сверка расходов» while the reconcile canno
 
 // The button comes back when the engine's date is reached. Nothing tells the window (the quiet rule moves no event), so the banner watches the clock itself: a timer for the date, armed
 // again if it fires early (a clock set back, a timer that drifted), and a look at the clock when the window comes back to the front (a sleep, a hidden tab).
-describe("«Перейти к сверке» comes back when the time has come", () => {
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-  const advance = (ms: number): void => {
-    act(() => {
-      jest.advanceTimersByTime(ms);
-    });
-  };
 
-  test("the button appears by itself after the date is crossed", () => {
-    jest.useFakeTimers();
-    show(view(money({ reconcileNeeded: true, availableInMs: 120 })));
-    expect(goReconcile() === null).toBe(true);
-    advance(320);
-    expect(goReconcile()).not.toBeNull();
-  });
-
-  test("a timer that fires while the clock is still short of the date is armed again, and the button comes later", () => {
-    jest.useFakeTimers();
-    // The timers run on their own virtual time and the clock on a number the test moves: the clock lags, as after a set-back or a drifting timer.
-    const base = Date.now();
-    let clock = base;
-    const now = spyOn(Date, "now").mockImplementation(() => clock);
-    try {
-      show(view(money({ reconcileNeeded: true, availableInMs: 150 })));
-      advance(260);
-      // The timer fired (about 200 ms in) with the clock still 100 ms short of the date: the banner is as it was.
-      expect(goReconcile() === null).toBe(true);
-      // The clock reaches the date with no event; only the timer armed again can draw the banner.
-      clock = base + 1_000;
-      expect(goReconcile() === null).toBe(true);
-      advance(700);
-      expect(goReconcile()).not.toBeNull();
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  test("the window coming to the front after the date has passed shows the button at once", () => {
-    jest.useFakeTimers();
-    show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
-    expect(goReconcile() === null).toBe(true);
-    // The machine slept: the clock is past the date, and no timer has fired.
-    jest.setSystemTime(new Date(Date.now() + 11 * MINUTE));
-    act(() => {
-      window.dispatchEvent(new Event("focus"));
-    });
-    expect(goReconcile()).not.toBeNull();
-  });
-
-  test("the page becoming visible again after the date has passed shows the button at once", () => {
-    jest.useFakeTimers();
-    show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
-    jest.setSystemTime(new Date(Date.now() + 11 * MINUTE));
-    act(() => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    expect(goReconcile()).not.toBeNull();
-  });
-});

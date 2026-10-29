@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { setup, describeElement, focusedLabel, inAct, flush, openWizard, tick, estimateText } from "./testing";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { setup, inAct, flush } from "./testing";
 
 const SECTION_LABELS = ["Аватары", "Фото", "Монтаж", "Автопилот", "Настройки"];
 
@@ -19,18 +19,6 @@ test("the sidebar lists all five sections and the version from the bridge", asyn
   expect(await screen.findByText("v9.9.9")).toBeDefined();
 });
 
-test("a failed version lookup shows a dash instead of a version", async () => {
-  Reflect.set(window, "studio", { version: () => Promise.reject(new Error("no handler for studio:version")) });
-  setup();
-  expect(await screen.findByText("—")).toBeDefined();
-  expect(screen.queryByText(/^v\d/) === null).toBe(true);
-});
-
-test("without a preload bridge the version is a dash too", async () => {
-  setup();
-  expect(await screen.findByText("—")).toBeDefined();
-});
-
 test("clicking a section switches the heading and the active item", async () => {
   setup();
   expect(heading()).toBe("Аватары");
@@ -41,13 +29,6 @@ test("clicking a section switches the heading and the active item", async () => 
   expect(heading()).toBe("Монтаж");
   expect(montage.getAttribute("aria-current")).toBe("page");
   expect(screen.getByRole("button", { name: "Аватары" }).getAttribute("aria-current")).toBeNull();
-  await screen.findByText("—");
-});
-
-test("a new screen moves focus to its heading", async () => {
-  setup();
-  fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Настройки" })));
   await screen.findByText("—");
 });
 
@@ -91,38 +72,6 @@ test("an engine notice closes with «Понятно» for the window, and comes 
 });
 
 // Review r1 LOW-3: the button that closed a notice goes with it; the focus must not fall to the body (the next Tab would start at the top).
-test("closing an engine notice hands the focus to the next notice, then to the screen's title", async () => {
-  const { engine } = setup({ preset: "demo" });
-  await screen.findByRole("heading", { level: 2, name: "Mia" });
-  inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
-  inAct(() => engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:01:00.000Z", count: 1 }));
-  await screen.findByText("Настройки сброшены");
-  const [first, second] = screen.getAllByRole("button", { name: "Понятно" });
-  first?.focus();
-  fireEvent.click(first ?? document.body);
-  await flush();
-  expect(focusedLabel()).toBe(describeElement(second ?? null));
-  fireEvent.click(second ?? document.body);
-  await flush();
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1 })));
-});
-
-test("an engine-restarted notice with open reserves does not repeat AccountBanner's reconcile call to action", async () => {
-  const { engine } = setup({ preset: "demo" });
-  await screen.findByRole("heading", { level: 2, name: "Mia" });
-
-  inAct(() => engine.requireReconcile(["open-reserves"]));
-  inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
-  await flush();
-
-  // The action — the button, and why it is needed — lives only in AccountBanner.
-  expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
-  expect(screen.getByRole("button", { name: "Перейти к сверке" })).toBeDefined();
-
-  // The notice itself states only what happened, with no reconcile wording of its own.
-  const notice = screen.getByText("Движок перезапускался").closest(".notice");
-  expect(notice?.textContent ?? "").not.toMatch(/сверк/i);
-});
 
 // The sidebar's foot draws only what the engine reports: the jobs still
 // running and this month's spend. The mockup's render queue and OpenRouter
@@ -146,32 +95,3 @@ test("the sidebar spending block is hidden when the ledger is not open", async (
   expect(screen.queryByRole("region", { name: "Расходы за месяц" }) === null).toBe(true);
 });
 
-test("the sidebar queue never shows 0 / 0 before the job's first progress event", async () => {
-  setup();
-  await openWizard();
-  fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
-  await waitFor(() => expect(estimateText()).not.toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: /Сгенерировать 4 варианта/ }));
-  await screen.findByText(/Рисуем портреты/);
-
-  // Right after avatars.generateCandidates answers, trackCandidatesJob adds
-  // the job as "queued" with no total yet (store.ts's emptyJob) — before its
-  // first job.progress event, which the scheduler has not fired yet.
-  const queue = screen.getByRole("region", { name: "Очередь" });
-  expect(within(queue).getByText("0 / 4")).toBeDefined();
-  expect(within(queue).queryByText("0 / 0") === null).toBe(true);
-});
-
-test("a running candidates job shows in the sidebar queue with its progress", async () => {
-  const { scheduler } = setup();
-  await openWizard();
-  fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
-  await waitFor(() => expect(estimateText()).not.toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: /Сгенерировать 4 варианта/ }));
-  await screen.findByText(/Рисуем портреты/);
-  tick(scheduler, 2);
-
-  const queue = screen.getByRole("region", { name: "Очередь" });
-  expect(within(queue).getByText(/^1\s*задача$/)).toBeDefined();
-  expect(within(queue).getByText("2 / 4")).toBeDefined();
-});

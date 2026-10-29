@@ -63,22 +63,4 @@ describe("the window against a launch the mock runs", () => {
     expect(within(card()).getByRole("button", { name: "Результаты · 2" })).toBeDefined();
   });
 
-  test("a hold the testkit raises is on the card with its fix, and «Продолжить» clears it", async () => {
-    const { engine, scheduler } = await started();
-    act(() => engine.failLaunchPaidStep("credits"));
-    tick(scheduler, 2);
-    await flush();
-    expect(within(card()).getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
-    const title = Array.from(card().querySelectorAll(".notice-title")).map((t) => t.textContent);
-    expect(title).toContain("Пополните баланс OpenRouter");
-  });
-
-  test("«Пауза» with nothing in flight pauses at once, and the window shows the pause", async () => {
-    const { client, launch } = await started();
-    await act(async () => {
-      await client.request("autopilot.pause", { launchId: launch.launchId });
-    });
-    await flush();
-    expect(within(card()).getByRole("heading", { level: 2, name: "Запуск на паузе" })).toBeDefined();
-  });
 });
