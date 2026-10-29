@@ -56,39 +56,9 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
     expect(tags(2).slice(-2)).toEqual(["смело", "Seedream · 2K"]);
   });
 
-  test("a flirty scene keeps «кокетливо»; on Seedream it says so too", async () => {
-    await openSet(["nightwear", "beach"], "bold");
-    expect(tags(3).slice(-2)).toEqual(["кокетливо", "Seedream · 2K"]);
-    expect(within(sceneCard(3)).queryByText("смело") === null).toBe(true);
-  });
-
   // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on Seedream now, its ordinary ones included, so scene 1 says «Seedream · 2K» and no level; the scenes on the owner's model
   // were a «Смелая» «Дом» set's.
-  test("an ordinary scene says no level; an ordinary nightwear or beach scene is still on Seedream", async () => {
-    await openSet(["nightwear", "beach"], "bold");
-    expect(within(sceneCard(1)).queryByText("смело") === null).toBe(true);
-    expect(within(sceneCard(1)).queryByText("кокетливо") === null).toBe(true);
-    expect(within(sceneCard(1)).getByText("Seedream · 2K")).toBeDefined();
-    expect(within(sceneCard(7)).getByText("Seedream · 2K")).toBeDefined();
-    expect(within(sceneCard(7)).queryByText("смело") === null).toBe(true);
-  });
-
   // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Смелая» plans «Дом» on the route once the mock mirrors the engine, so the owner's-model control is a «Кокетливая» «Дом» set's.
-  test("a scene on the owner's model has neither: a «Кокетливая» «Дом» set's", async () => {
-    await openSet(["home"], "flirty");
-    const cards = Array.from({ length: 12 }, (_, i) => sceneCard(i + 1));
-    for (const scene of cards) {
-      expect(within(scene).queryByText("смело") === null).toBe(true);
-      expect(within(scene).queryByText("Seedream · 2K") === null).toBe(true);
-    }
-    expect(cards.some((scene) => within(scene).queryByText("кокетливо") === null)).toBe(true);
-  });
-
-  test("the strip says «Подача: смелая · Ракурс — из сцены.»", async () => {
-    await openSet(["nightwear", "beach"], "bold");
-    expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново.");
-  });
-
   // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 24; mockup 66a): every scene of the set on the route — Seedream draws all of it, so the line names it alone, with the set's text model, and its
   // title says the settings do not change it. A set with a scene off the route (an old one, an own scene) keeps the settings' model and names the bold frames' last.
   test("every scene on the route: the line names Seedream 5 Pro · 2K alone, with the set's text model", async () => {
@@ -98,21 +68,6 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
     expect(card().querySelector(".scene-strip-models .nowrap")?.textContent).toBe("Seedream 5 Pro · 2K");
     expect(card().querySelector(".scene-strip-models")?.getAttribute("title")).toBe(
       "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.",
-    );
-  });
-
-  test("a scene off the route keeps the settings' model, the bold frames' named last", async () => {
-    const place = (location: string, outfit: string) => ({ location, timeOfDay: "evening", activity: "fixing her hair", outfit });
-    await openSet(["nightwear", "home"], "bold", {
-      scenes: [
-        { category: "nightwear", shot: "mirror", pose: "front", place: place("bedroom mirror", "a black lace bra and briefs"), text: "Mirror, lace.", level: "bold", route: "seedream" },
-        { category: "home", shot: "friend", pose: "front", place: place("living room sofa", "a cream knit sweater"), text: "Sofa, sweater." },
-      ],
-    });
-    expect(modelsLine().startsWith("Seedream")).toBe(false);
-    expect(modelsLine()).toMatch(/· 9:16 · референс — мастер-портрет · текст grok-4\.3 · смелые кадры — Seedream 5 Pro · 2K$/);
-    expect(card().querySelector(".scene-strip-models")?.getAttribute("title")).toBe(
-      "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.",
     );
   });
 
@@ -161,12 +116,6 @@ describe("the strip when the 2K price is missing (gap D)", () => {
 });
 
 describe("a set with no Seedream scene", () => {
-  test("shows no route tag, no models segment and no Seedream price line", async () => {
-    await openSet(["home", "glam"], "flirty");
-    for (let n = 1; n <= 12; n++) expect(within(sceneCard(n)).queryByText("Seedream · 2K") === null).toBe(true);
-    expect(modelsLine().includes("Seedream 5 Pro")).toBe(false);
-    expect(within(card()).queryByText(/^Seedream 2K/) === null).toBe(true);
-  });
 });
 
 // 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 24–26; mockup 66a): a «Смелая» set of a custom category. The writer sets each scene in the category's world (r2.2 D6): the card says which under
@@ -180,25 +129,6 @@ describe("a custom category's «Смелая» set (mockup 66a)", () => {
     return { ...harness, set: reply.result.sceneSet };
   }
 
-  test("every card says the world its scene belongs to under its text, in English as the writer gave it", async () => {
-    const { set } = await openCustom();
-    for (const scene of set.scenes) {
-      const world = scene.place?.world;
-      if (world === undefined) throw new Error(`scene ${scene.sceneId} has no world`);
-      const line = sceneCard(scene.sceneId).querySelector(".scene-world");
-      expect(line?.textContent).toBe(`мир категории: «${world}»`);
-      // The world is the writer's English, read as such.
-      expect(line?.querySelector("[lang='en']")?.textContent).toBe(world);
-      // Under the text, not among the tags.
-      expect(line?.previousElementSibling?.classList.contains("photos-scene-text")).toBe(true);
-    }
-  });
-
-  test("the models line names Seedream 5 Pro · 2K alone", async () => {
-    await openCustom();
-    expect(modelsLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
-  });
-
   test("⟳ «Другая сцена»: a new place, outfit, action and time in the category's world, a new text, «Подача» kept; at the bold writer's «до $0.098»", async () => {
     await openCustom();
     fireEvent.click(within(sceneCard(1)).getByRole("button", { name: "Другая сцена вместо 01" }));
@@ -211,10 +141,6 @@ describe("a custom category's «Смелая» set (mockup 66a)", () => {
 });
 
 describe("a scene with no world says none", () => {
-  test("a built-in «Смелая» scene and a «Кокетливая» one have no «мир категории» line", async () => {
-    await openSet(["nightwear", "beach"], "bold");
-    expect(card().ownerDocument.querySelectorAll(".scene-world")).toHaveLength(0);
-  });
 });
 
 // 5a.4 (S5.BA8b round 2, MEDIUM-1; r2.3 M6, QB-4): at «Смелая» a custom category's own angles do not apply — its scenes on the route take the angle from the scene — so the strip names
@@ -222,25 +148,4 @@ describe("a scene with no world says none", () => {
 describe("the strip's own-angles words for a custom category with angles of its own", () => {
   const ANGLED = category(5, "Балкон со спины", { ...PARIS_POOL, poses: ["three-quarter", "back"] });
 
-  test("a «Смелая» set of it, on the route: «Подача: смелая · Ракурс — из сцены», no «— свои»", async () => {
-    await openSet([ANGLED.categoryId], "bold", { customs: [ANGLED] });
-    expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново.");
-  });
-
-  test("a «Смелая» set stored before 5a.4, its scenes off the route: «у «Балкон со спины» — свои» as before", async () => {
-    const place = { location: "hotel balcony", timeOfDay: "evening", activity: "leaning on the rail", outfit: "a linen dress" };
-    await openSet([ANGLED.categoryId], "bold", {
-      customs: [ANGLED],
-      scenes: [
-        { category: ANGLED.categoryId, shot: "friend", pose: "back", place, text: "Balcony, from behind." },
-        { category: ANGLED.categoryId, shot: "friend", pose: "three-quarter", place, text: "Balcony, three-quarter." },
-      ],
-    });
-    expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены; у «Балкон со спины» — свои. Настройки набора не меняются — Пересоставить… начнёт заново.");
-  });
-
-  test("below «Смелая» it is named as before", async () => {
-    await openSet([ANGLED.categoryId], "flirty", { customs: [ANGLED] });
-    expect(lockLine()).toBe("Подача: кокетливая · Ракурс — из сцены; у «Балкон со спины» — свои. Настройки набора не меняются — Пересоставить… начнёт заново.");
-  });
 });

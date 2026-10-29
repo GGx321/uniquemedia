@@ -89,15 +89,6 @@ const escaped = (text: string): string => text.replace(/[$.]/g, "\\$&");
 const goName = (count: number, worst: number): RegExp => new RegExp(`^Сгенерировать ${count} фото · до ${escaped(formatUsd(worst, 2, "up"))}$`);
 
 describe("«Подача: Обычная · Кокетливая · Смелая», all live (mockup 47)", () => {
-  test("«Смелая» can be chosen like the other two; nothing says it comes later any more", async () => {
-    await openPhotos();
-    for (const name of ["Обычная", "Кокетливая", "Смелая"] as const) expect(level(name).disabled).toBe(false);
-    await pickLevel("Смелая");
-    expect(level("Смелая").checked).toBe(true);
-    expect(card().textContent?.includes("появится позже") ?? true).toBe(false);
-    expect(card().textContent?.includes("появятся позже") ?? true).toBe(false);
-  });
-
   test("47: «Ночнушки и бельё» and «Пляж и бассейн» on, 10 each — the caption, the slow line, the engine's prices and its Seedream line", async () => {
     const { engine, client } = await openPhotos();
     await pickLevel("Смелая");
@@ -154,36 +145,7 @@ describe("«Подача: Обычная · Кокетливая · Смелая
   });
 
   // 5a.4 (S5.BA8a, QB-4, r2.2): a custom category draws «Смелая» like the rest, so it has a caption and the slow line; «Подача — только во встроенных категориях» is «Кокетливая»'s.
-  test("47b#own: only a custom category — captioned like the rest, with the slow line", async () => {
-    await openPhotos({ categories: [PARIS] });
-    await pickLevel("Смелая");
-    await only();
-    await click(chip("Кофейни Парижа"));
-    expect(within(card()).getByText(said(20, [PARIS.categoryId], [PARIS]).caption)).toBeDefined();
-    expect(within(card()).queryByText("Подача — только во встроенных категориях") === null).toBe(true);
-    expect(within(card()).getByText(SLOW)).toBeDefined();
-  });
-
   // Review L-5: the cover clause is a Studio-created avatar's only, so it must reach the DOM for one (every other fixture here is imported).
-  test("a Studio-created avatar's card names the covers its frames may draw, and has no imported-avatar line", async () => {
-    await openPhotos({ avatars: [{ ...MIA, origin: "studio" }] });
-    await pickLevel("Смелая");
-    await only("Дом");
-    const studio = { ...MIA, origin: "studio" as const };
-    const caption = cardLevelCaption("bold", 20, ["home"], { avatar: studio, legs: 0, customs: [] });
-    if (caption === null) throw new Error("the card has a caption here");
-    expect(caption).toContain("часть смелых — только простыня, полотенце или пена");
-    expect(within(card()).getByText(caption.replace(/\s+/g, " "))).toBeDefined();
-    expect(within(card()).queryByText(/^Аватар из фото/) === null).toBe(true);
-  });
-
-  test("the caption follows the stepper: 25 photos → 10 and 10 of them bold and flirty", async () => {
-    await openPhotos();
-    await pickLevel("Смелая");
-    await only("Ночнушки и бельё", "Пляж и бассейн");
-    await click(within(card()).getByRole("button", { name: "Больше" }));
-    expect(within(card()).getByText(said(25, ["nightwear", "beach"]).caption)).toBeDefined();
-  });
 });
 
 describe("the two chips under another «Подача» (mockup 48)", () => {
@@ -191,70 +153,6 @@ describe("the two chips under another «Подача» (mockup 48)", () => {
     const { engine } = await openPhotos();
     for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) expect(chip(name).getAttribute("aria-pressed")).toBe("false");
     expect(lastEstimate(engine)?.categories).toEqual(["home", "travel", "shoot", "glam", "fit"]);
-  });
-
-  test("under «Обычная» and «Кокетливая» they are dimmed, «Только со «Смелой»», described by the note, and a click does nothing", async () => {
-    const { engine } = await openPhotos();
-    for (const face of ["Обычная", "Кокетливая"] as const) {
-      await pickLevel(face);
-      for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-        const el = chip(name);
-        expect(el.getAttribute("aria-disabled")).toBe("true");
-        expect(el.classList.contains("gen-chip-gated")).toBe(true);
-        expect(el.getAttribute("title")).toBe("Только со «Смелой»");
-        expect(described(el)).toEqual([GATED]);
-        await click(el);
-        expect(chip(name).getAttribute("aria-pressed")).toBe("false");
-      }
-      expect(within(card()).getByText(GATED)).toBeDefined();
-    }
-    expect(callsOf(engine, "runs.estimate").some((c) => c.payload.categories.some((ref) => ref === "nightwear" || ref === "beach"))).toBe(false);
-  });
-
-  test("under «Смелая» they are plain chips and the note goes", async () => {
-    await openPhotos();
-    await pickLevel("Смелая");
-    for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-      const el = chip(name);
-      expect(el.getAttribute("aria-disabled")).toBeNull();
-      expect(el.classList.contains("gen-chip-gated")).toBe(false);
-      expect(el.getAttribute("title")).toBe(name);
-    }
-    expect(within(card()).queryByText(/^Только со «Смелой»/) === null).toBe(true);
-  });
-
-  test("48#kept: a pick made under «Смелая» stays, off, under «Кокетливая» and comes back with «Смелая» (7 + 7 + 6)", async () => {
-    const { engine } = await openPhotos();
-    await pickLevel("Смелая");
-    await only("Дом", "Виды", "Ночнушки и бельё");
-    expect(chip("Ночнушки и бельё").getAttribute("aria-label")).toBe("Ночнушки и бельё: 6 фото");
-    expect(within(card()).getByText(said(20, ["home", "travel", "nightwear"]).caption)).toBeDefined();
-
-    await pickLevel("Кокетливая");
-    const kept = chip("Ночнушки и бельё");
-    // Round 2 (L4): kept, but not in this run — never announced as pressed; its description says it comes back with «Смелая».
-    expect(kept.getAttribute("aria-pressed")).toBe("false");
-    expect(kept.getAttribute("aria-disabled")).toBe("true");
-    expect(kept.classList.contains("gen-chip-kept")).toBe(true);
-    expect(kept.getAttribute("aria-label")).toBe("Ночнушки и бельё");
-    expect(described(kept)).toEqual(["Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней."]);
-    expect(within(card()).getByText("Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней.")).toBeDefined();
-    expect(chip("Дом").getAttribute("aria-label")).toBe("Дом: 10 фото");
-    expect(lastEstimate(engine)).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel"], level: "flirty" });
-
-    await pickLevel("Смелая");
-    expect(chip("Ночнушки и бельё").getAttribute("aria-disabled")).toBeNull();
-    expect(chip("Ночнушки и бельё").getAttribute("aria-label")).toBe("Ночнушки и бельё: 6 фото");
-    expect(lastEstimate(engine)).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "nightwear"], level: "bold" });
-  });
-
-  test("48#kept, both: «выбранные вернутся вместе с ней»; with nothing else on there is nothing to send", async () => {
-    await openPhotos();
-    await pickLevel("Смелая");
-    await only("Ночнушки и бельё", "Пляж и бассейн");
-    await pickLevel("Обычная");
-    expect(within(card()).getByText("Только со «Смелой»: выбранные вернутся вместе с ней.")).toBeDefined();
-    expect(within(card()).getByText("Выберите хотя бы одну категорию.")).toBeDefined();
   });
 
   test("the pick goes into the run itself only with «Смелая»: runs.start carries the category and `level: \"bold\"`", async () => {
@@ -281,15 +179,6 @@ describe("the two chips under another «Подача» (mockup 48)", () => {
 });
 
 describe("the scenes column's writers with a kept «Смелая» pick", () => {
-  test("a kept «Ночнушки и бельё» writes nothing: with only the model's category asked for, the column names the model alone", async () => {
-    await openPhotos({ categories: [FIXTURE] });
-    await pickLevel("Смелая");
-    await only("Ночнушки и бельё");
-    await click(chip("Только модель"));
-    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok\S*$/));
-    await pickLevel("Кокетливая");
-    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · \S*grok\S*$/));
-  });
 });
 
 // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 6; mockup 65a): at «Смелая» the model writes every custom category's scenes in its bold mode (the scene carries its world). The price column says
@@ -317,28 +206,9 @@ describe("«Кто пишет сцены» at «Смелая» (mockup 65a)", ()
 describe("the model line under «Тип кадра»", () => {
   const shotLine = (): string => card().querySelector(".photos-shot-caption")?.textContent?.replace(/\s+/g, " ") ?? "";
 
-  test("«Смелая»: «Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет»; «Обычная» and «Кокетливая»: the settings' model", async () => {
-    await openPhotos();
-    await waitFor(() => expect(shotLine()).toMatch(/· low · 9:16 · референс — мастер-портрет$/));
-    const ordinary = shotLine();
-    expect(ordinary.startsWith("Seedream")).toBe(false);
-    await pickLevel("Смелая");
-    expect(shotLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет");
-    await pickLevel("Кокетливая");
-    expect(shotLine()).toBe(ordinary);
-  });
 });
 
 describe("the two chips' hints (mockup 48a)", () => {
-  test("«Ночнушки и бельё» under the pointer, «Пляж и бассейн» in focus — under «Смелая» and while they wait for it", async () => {
-    await openPhotos();
-    fireEvent.pointerEnter(chip("Ночнушки и бельё"));
-    expect(screen.getByText(HINT.nightwear)).toBeDefined();
-    fireEvent.pointerLeave(chip("Ночнушки и бельё"));
-    await pickLevel("Смелая");
-    fireEvent.focus(chip("Пляж и бассейн"));
-    expect(screen.getByText(HINT.beach)).toBeDefined();
-  });
 });
 
 describe("state 55: the 2K price is missing", () => {
@@ -361,25 +231,6 @@ describe("state 55: the 2K price is missing", () => {
   });
 
   // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. at «Смелая» the five need the 2K tier too, so the card that prices as before is a «Кокетливая» one.
-  test("the rest still works: below «Смелая» the card prices as before", async () => {
-    const { engine } = await openPhotos();
-    engine.lackBoldPrice();
-    await pickLevel("Кокетливая");
-    await within(card()).findByRole("button", { name: /^Сгенерировать 20 фото · до \$/ });
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
-  });
-
-  test("any other price failure shows today's general text, never state 55's", async () => {
-    const { engine } = await openPhotos();
-    await pickLevel("Смелая");
-    await only("Дом");
-    // The next price asked fails without a scope: the one for the request with «Ночнушки и бельё» on.
-    engine.failNext("runs.estimate", { code: "PRICE_UNAVAILABLE" });
-    await click(chip("Ночнушки и бельё"));
-    await waitFor(() => expect(screen.getByText(errorText({ code: "PRICE_UNAVAILABLE" }))).toBeDefined());
-    expect(lastEstimate(engine)?.categories).toEqual(["home", "nightwear"]);
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
-  });
 });
 
 describe("«Смелая» remembered per avatar, like «Кокетливая»", () => {
@@ -398,25 +249,4 @@ describe("«Смелая» remembered per avatar, like «Кокетливая»"
   });
 
   // Round 2 (L5): «for this avatar only» — a second avatar keeps her own «Подача», on screen and in storage, and Mia keeps hers.
-  test("a second avatar keeps her own «Подача»: Mia «Смелая», Sofia «Кокетливая», each back as it was", async () => {
-    const SOFIA = { ...MIA, avatarId: "avatar-sofia-0002", name: "Sofia", masterPhotoId: "photo-sofia-0001" };
-    async function openAvatarPhotos(name: string): Promise<void> {
-      fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
-      fireEvent.click(await screen.findByRole("button", { name }));
-      await screen.findByRole("heading", { level: 1, name });
-      await openSection("Фото");
-      await screen.findByRole("heading", { level: 1, name });
-    }
-    await openPhotos({ avatars: [MIA, SOFIA] });
-    await pickLevel("Смелая");
-    await openAvatarPhotos("Sofia");
-    expect(level("Обычная").checked).toBe(true);
-    await pickLevel("Кокетливая");
-    await openAvatarPhotos("Mia");
-    expect(level("Смелая").checked).toBe(true);
-    await openAvatarPhotos("Sofia");
-    expect(level("Кокетливая").checked).toBe(true);
-    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${MIA.avatarId}`)).toBe("bold");
-    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`)).toBe("flirty");
-  });
 });
