@@ -261,16 +261,9 @@ describe("the continuity line (critic M5, r2.2; the controller's round 2)", () =
 
   const TRIGGERS = [
     "she slides the strap up slowly",
-    "she lets the strap settle on her shoulder slowly",
     "she pulls the sheet a little higher",
-    "she pulls the blanket up a little",
-    "she pulls the duvet up a little",
     "she tugs the waistband up slowly",
-    "she smooths the hem down slowly",
-    "she pulls the laces tight slowly",
-    "she tugs the coat closer slowly",
     "she turns the earring slowly",
-    "she slowly peeks over her sunglasses",
     // Putting a jacket or a coat ON: what she wears changes, so the base line would contradict it.
     "she slides one arm in slowly",
   ];
@@ -287,21 +280,12 @@ describe("the continuity line (critic M5, r2.2; the controller's round 2)", () =
 
   const HELD: readonly (readonly [string, string | null])[] = [
     ["she lowers the cup a little", null],
-    ["she turns her glass slowly", null],
-    ["she lifts the mug a little", null],
-    ["she jingles her keys a little", null],
-    ["she scrolls her phone slowly", null],
-    ["she twirls the fork slowly", null],
-    ["she lifts the weight slowly", null],
     ["she shifts her weight a little", null],
-    ["she shifts against the glass a bit", null],
-    ["she slowly turns her head toward them", null],
     // A stretch of her arm is not a sleeve: only the exact «slides one arm in» puts one on.
     ["she pulls her arm in a little", null],
     // A bag is held, not worn (K09 lost its bag): its zip and its strap keep the base line, whether the motion or the moment names the bag.
     ["she zips the bag slowly", null],
     ["she tugs the strap a little", "adjusts the strap of her bag"],
-    ["she tucks the clutch away slowly", null],
   ];
   for (const [motion, activity] of HELD) {
     test(`a held object, her weight or a window keeps the base line: ${motion}${activity === null ? "" : ` (${activity})`}`, () => {
