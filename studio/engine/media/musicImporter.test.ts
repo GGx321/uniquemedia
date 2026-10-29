@@ -62,7 +62,10 @@ async function dumpOf(path: string): Promise<string> {
 
 /** A push runs the rows in `onPush` (one witness per codec family); the other rows of `rows` run in the heavy run. */
 function eachRow<R extends readonly [string, ...unknown[]]>(rows: readonly R[], onPush: readonly string[], title: (row: R) => string, body: (...row: R) => Promise<void>): void {
-  for (const row of rows) (onPush.includes(row[0]) ? test : heavyTest)(title(row), () => body(...row));
+  for (const row of rows) {
+    if (onPush.includes(row[0])) test(title(row), () => body(...row));
+    else heavyTest(title(row), () => body(...row));
+  }
 }
 
 describe("the formats the importer takes", () => {

@@ -134,11 +134,8 @@ describe("colour", () => {
 
   for (const encoding of ENCODINGS) {
     for (const [name, hex, rgb] of PATCHES) {
-      // A push checks the red patch of every encoding, all three patches of the plain BT.709 one, and the green of the untagged and full-range ones (their green is off by 9 to 10 on
-      // the ubuntu ffmpeg of the heavy run, so it is pinned where the ffmpeg builds it was tuned for run). The other patches run in the heavy run.
-      const onPush = name === "red" || encoding === "709tv" || (name === "green" && (encoding === "709untagged" || encoding === "709pc"));
-      const register = onPush ? test : heavyTest;
-      register(`the poster of a ${encoding} ${name} clip is ${name} within 6 per channel`, async () => {
+      // Every patch of every encoding runs on a push: the colour of an ffmpeg build differs between platforms (the green is off by 9 to 10 on the ubuntu build of the heavy run), so these are pinned where the push runs.
+      test(`the poster of a ${encoding} ${name} clip is ${name} within 6 per channel`, async () => {
         const path = await clip({ width: 720, height: 1280, seconds: 5, patch: hex, encoding });
         const out = join(scratch, "poster.tmp");
         await makePoster({ colour: await colourOf(path), log: noLog, clipPath: path, outPath: out });

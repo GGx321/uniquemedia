@@ -466,8 +466,10 @@ jobs:
 
   # The heavy tier (see TEST TIERS at the top): `[heavy]` tests, the slow ones a
   # push does not need: the font byte-mutation fuzz and the sticker script run
-  # in a fresh process. Platform-independent, so ubuntu only (1x of the private
-  # repo's minutes; macOS bills 10x, Windows 2x). Nightly (the "17 2" cron), on a
+  # in a fresh process. It runs on ubuntu only (1x of the private repo's minutes;
+  # macOS bills 10x, Windows 2x), so a heavy test that depends on the ffmpeg build
+  # (colour, codec details) is checked on ubuntu's build alone; keep such a test on
+  # the push, where Windows and macOS run it. A weekly heavy run on them is in the backlog. Nightly (the "17 2" cron), on a
   # manual run of the heavy or the scheduled tier, and on every tag; on the nightly
   # schedule and on a `studio-v*` tag a failure turns the run red (GitHub only emails
   # a failed scheduled run, and a tag must not pass over a regression); on a manual run
