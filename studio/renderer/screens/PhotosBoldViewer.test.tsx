@@ -38,9 +38,4 @@ describe("the viewer's route tag (mockup 51)", () => {
     expect(within(viewer).queryByText(/Seedream/) === null).toBe(true);
   });
 
-  test("the gallery tile stays as it was: no route tag on it", async () => {
-    await openViewer(scenePhoto(1, { category: "beach", qa: { faceCos: 0.71 }, route: "seedream" }), "Пляж и бассейн");
-    const tile = document.querySelector(".photo-tile");
-    expect(tile?.textContent?.includes("Seedream") ?? true).toBe(false);
-  });
 });

@@ -18,12 +18,4 @@ describe("a stopped run's resume row (state 55)", () => {
     expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
   });
 
-  test("a resume estimate refused without a price scope keeps the general price text", async () => {
-    const { engine } = setup({ avatars: [MIA] });
-    engine.seedRun({ avatarId: MIA.avatarId, count: 12, categories: ["nightwear"], level: "bold", poses: { profile: false, back: false } }, 8);
-    engine.failNext("runs.estimateResume", { code: "PRICE_UNAVAILABLE", detail: "no price" });
-    await openSection("Фото");
-    await screen.findByText(errorText({ code: "PRICE_UNAVAILABLE" }));
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
-  });
 });

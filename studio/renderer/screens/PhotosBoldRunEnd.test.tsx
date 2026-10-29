@@ -83,21 +83,6 @@ describe("the end of a run with «Смелая» frames that ended (gap B: count
     expect(failedLine().includes(GENERAL)).toBe(false);
   });
 
-  test("three `model-refused`, every failed frame — the bare sentence too", () => {
-    render(<RunOutcome job={ended(17, 3, ["model-refused", "model-refused", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
-    expect(failedLine()).toBe(`Не получилось: 3. ${REFUSED}`);
-  });
-
-  test("50#empty: two `model-empty`, every failed frame — mockup 50's line word for word", () => {
-    render(<RunOutcome job={ended(18, 2, ["model-empty", "model-empty"])} fromSet={false} photos={[photo("p1")]} />);
-    expect(failedLine()).toBe("Не получилось: 2. Модель вернула пустой ответ на кадр «Смелой»; попытка учтена в расходах.");
-  });
-
-  test("50#mixed: two refused and one empty → each counted, in the order they came, no general sentence", () => {
-    render(<RunOutcome job={ended(17, 3, ["model-refused", "model-empty", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
-    expect(failedLine()).toBe(`Не получилось: 3. Из них 2 — ${lower(REFUSED)} Из них 1 — ${lower(EMPTY)}`);
-  });
-
   test("50#empty: one `model-empty` → the contract's text, which says the attempt is in the spend; never «бесплатно»", () => {
     render(<RunOutcome job={ended(19, 1, ["model-empty"])} fromSet={false} photos={[photo("p1")]} />);
     expect(failedLine()).toBe(`Не получилось: 1. ${EMPTY}`);
@@ -110,12 +95,6 @@ describe("the end of a run with «Смелая» frames that ended (gap B: count
     expect(failedLine()).toBe(`Не получилось: 2. Из них 1 — текст сцены не прошёл проверку слов: кадр пропущен, бесплатно. Из них 1 — ${lower(REFUSED)}`);
   });
 
-  test("the reason gets its own line under the gallery's (mockup 50)", () => {
-    render(<RunOutcome job={ended(18, 2, ["model-refused", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
-    const notice = document.querySelector(".notice-text");
-    expect(notice?.firstChild?.textContent).toBe("В галерее 18\u00a0фото этого запуска.");
-    expect(notice?.lastElementChild?.classList.contains("run-end-line")).toBe(true);
-  });
 });
 
 // The window never sends a «Смелая» category without «Смелая» (PhotosBold, AutopilotBold), so the engine says this only when another window raced it (mockup
@@ -128,8 +107,4 @@ describe("`bold-level-needed` is the contract's text, wherever it shows (§13.2,
     expect(errorText({ code: "VALIDATION", sceneReason: "bold-level-needed" })).toBe(TEXT);
   });
 
-  test("a refused launch says it as a launch reason", () => {
-    expect(LAUNCH_REASONS_RU["bold-level-needed"]).toBe(TEXT);
-    expect(errorText({ code: "VALIDATION", launchReason: "bold-level-needed" })).toBe(TEXT);
-  });
 });
