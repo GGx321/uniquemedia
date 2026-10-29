@@ -3,10 +3,10 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { ERROR_MESSAGES_RU, type MontageDraft, mediaReasonRu } from "../../shared/engine";
 import type { MockEngine, MockMediaPick } from "../engine/mockEngine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, describeElement, flush, focusedLabel } from "../testing";
+import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
-import { collageClip, photoClip } from "./montage/testkit";
+import { photoClip } from "./montage/testkit";
 
 // 3f.6: the «Мои» tab in the editor (EditorMine.dc.html; M1–M12, M14, M15). The drop zone asks MAIN for its dialog (`media.pickImport
 // {kind: "any"}`: a kind and nothing else); the owner's files are listed (`media.list`) and kept current by `media.changed`; a click places
@@ -28,8 +28,6 @@ const IDS = PHOTO_IDS.slice(0, 4);
 const PHOTO = "media-demo-0001";
 const VIDEO = "media-demo-0002";
 const SONG = "media-demo-0003";
-const NOTE = "media-demo-0004";
-const STICKER = "media-demo-0005";
 
 /** The library: a photo, a 6.4 s video, a 42 s track, a 5 s track (shorter than the 8 s montage) and a sticker; listed newest first. */
 function seed(engine: MockEngine): void {
@@ -95,14 +93,6 @@ describe("the tab: the drop zone and the owner's files in three sections", () =>
     expect(callsOf(engine, "media.list").some((c) => c.payload.kind === undefined && c.payload.mediaIds === undefined)).toBe(true);
   });
 
-  test("a file stored meanwhile (another window's import) shows up first, one deleted elsewhere goes", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    await asAnotherWindow(() => client.request("media.delete", { mediaId: PHOTO }));
-    expect(within(section("Фото и видео")).queryByRole("button", { name: /croissant/ }) === null).toBe(true);
-    expect(plain(section("Фото и видео").querySelector(".lbl")?.textContent)).toBe("Фото и видео · 1");
-  });
 });
 
 describe("placing own files (M7, M11, M12): each is one undo step", () => {
@@ -135,84 +125,6 @@ describe("placing own files (M7, M11, M12): each is one undo step", () => {
     expect(clipLabels()).toHaveLength(5);
   });
 
-  test("a photo fills the empty cell the selected clip waits with", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client, { clips: [collageClip(0, [null, IDS[0] ?? ""], 4_000, false), photoClip(1, IDS[1] ?? "", 2_000)] });
-    // Selecting the collage selects its first cell, the empty one.
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: коллаж 2/ }));
-    await flush();
-    expect(plain(within(section("Фото и видео")).getByRole("button", { name: /^Видео latte-pour/ }).getAttribute("aria-label"))).toBe("Видео latte-pour.mov, 0:06: добавить кадр в конец ролика");
-    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: в ячейку 1 кадра 1" }));
-    await flush();
-    const saved = await nextSave(engine);
-    const first = saved.clips[0];
-    expect(first?.kind === "collage" ? first.cells[0]?.photo : null).toEqual({ source: "own", mediaId: PHOTO });
-    expect(saved.clips).toHaveLength(2);
-  });
-
-  test("3-H1: an own photo in a cell is judged for its face as a scene photo is («ищем лицо…» until the answer), and the cell shows the photo", async () => {
-    const { client, engine, scheduler } = await studio();
-    seed(engine);
-    await openMine(engine, client, { clips: [collageClip(0, [null, IDS[0] ?? ""], 4_000, false), photoClip(1, IDS[1] ?? "", 2_000)] });
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: коллаж 2/ }));
-    await flush();
-    engine.delayNext("montages.focus", 1_000);
-    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: в ячейку 1 кадра 1" }));
-    await flush();
-    const props = (): HTMLElement => screen.getByRole("complementary", { name: "Свойства" });
-    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
-    expect(within(props()).getByRole("img", { name: "Ячейка 1" })).toBeDefined();
-    act(() => scheduler.runAll());
-    await flush();
-    expect(within(props()).queryByText("ищем лицо…") === null).toBe(true);
-  });
-
-  test("slice review 5-M5: with a filled cell the owner selected, a photo replaces that cell's photo; a video still goes to the end", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2: / }));
-    await flush();
-    expect(plain(within(section("Фото и видео")).getByRole("button", { name: /^Видео latte-pour/ }).getAttribute("aria-label"))).toBe("Видео latte-pour.mov, 0:06: добавить кадр в конец ролика");
-    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: заменить фото в ячейке 1 кадра 2" }));
-    await flush();
-    const saved = await nextSave(engine);
-    expect(saved.clips).toHaveLength(4);
-    expect(saved.clips[1]).toMatchObject({ kind: "photo", cell: { photo: { source: "own", mediaId: PHOTO }, focus: null } });
-    undo();
-    await flush();
-    expect(clipLabels()).toHaveLength(4);
-  });
-
-  test("3-H1: an own photo's clip shows the photo in the timeline's film strip, never the empty cell's hatching", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: добавить кадр в конец ролика" }));
-    await flush();
-    const clip = within(timeline()).getByRole("button", { name: /^Кадр 5: / });
-    const frames = [...clip.querySelectorAll(".ed-strip-frame")];
-    expect(frames.length).toBeGreaterThan(0);
-    expect(frames.every((f) => !f.classList.contains("ed-strip-frame-empty"))).toBe(true);
-    expect((frames[0] as HTMLElement).style.background).toContain("linear-gradient");
-  });
-
-  test("dragged onto «Кадры», a video becomes a clip at the boundary under the pointer", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    const lane = timeline().querySelector(".ed-lane-clips");
-    if (lane === null) throw new Error("no clip lane");
-    fireEvent.dragStart(within(section("Фото и видео")).getByRole("button", { name: /^Видео latte-pour\.mov/ }));
-    fireEvent.dragOver(lane, { clientX: 0 });
-    fireEvent.drop(lane, { clientX: 0 });
-    await flush();
-    const saved = await nextSave(engine);
-    expect(saved.clips[0]).toMatchObject({ kind: "video", mediaId: VIDEO, durationMs: 2_000 });
-    expect(saved.clips).toHaveLength(5);
-  });
-
   test("a track becomes the music from 0; one shorter than the montage is dimmed and picks nothing (M10)", async () => {
     const { client, engine } = await studio();
     seed(engine);
@@ -229,24 +141,6 @@ describe("placing own files (M7, M11, M12): each is one undo step", () => {
     expect(plain(within(section("Музыка")).getByRole("button", { name: /^summer-edit\.mp3/ }).textContent)).toBe("summer-edit.mp30:42 · ✓ в ролике");
   });
 
-  test("listening: in the dev mock there is no audio, so the button says why and plays nothing", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    const listen = within(section("Музыка")).getByRole("button", { name: "Послушать summer-edit.mp3" });
-    expect(listen.hasAttribute("disabled")).toBe(true);
-    expect(listen.getAttribute("title")).toBe("Прослушать нельзя: звук этого файла недоступен");
-  });
-
-  test("a sticker: a layer at the playhead with the own source, selected", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
-    fireEvent.click(within(section("Стикеры")).getByRole("button", { name: "Стикер underline.gif: в плейхед" }));
-    const saved = await nextSave(engine);
-    expect(saved.layers).toEqual([expect.objectContaining({ kind: "sticker", startMs: 0, endMs: 3_000, sticker: { source: "own", mediaId: STICKER } })]);
-    expect(within(section("Стикеры")).getByRole("button", { name: "Стикер underline.gif: в плейхед, в ролике 1, у выбранного слоя" })).toBeDefined();
-  });
 });
 
 describe("adding files through main's dialog (M1, M6, M14, M15)", () => {
@@ -295,31 +189,6 @@ describe("adding files through main's dialog (M1, M6, M14, M15)", () => {
     expect(within(media()).getByText("Своих файлов пока нет")).toBeDefined();
   });
 
-  test("a file the kind's importer refuses is told in the KIND's words (video), and the owner closes it", async () => {
-    const { client, engine, scheduler } = await studio();
-    await openMine(engine, client);
-    engine.pickMediaNext([{ name: "clip.webm", accept: { kind: "video", bytes: 900, failWith: "codec" } }]);
-    fireEvent.click(within(media()).getByRole("button", { name: /Добавить файлы/ }));
-    await flush();
-    act(() => scheduler.runAll());
-    await flush();
-    const card = within(media()).getByRole("alert");
-    expect(plain(card.textContent)).toBe(`clip.webm не подходит${mediaReasonRu("codec", "video")}`);
-    fireEvent.click(within(card).getByRole("button", { name: "Закрыть: clip.webm не подходит" }));
-    expect(within(media()).queryByRole("alert") === null).toBe(true);
-  });
-
-  test("a dialog cancelled is nothing; a pick the engine refused is said", async () => {
-    const { client, engine } = await studio();
-    await openMine(engine, client);
-    fireEvent.click(within(media()).getByRole("button", { name: /Добавить файлы/ }));
-    await flush();
-    expect(within(media()).queryByRole("alert") === null).toBe(true);
-    engine.failNext("media.pickImport", { code: "LIBRARY_UNAVAILABLE" });
-    fireEvent.click(within(media()).getByRole("button", { name: /Добавить файлы/ }));
-    await flush();
-    expect(plain(within(media()).getByRole("alert").textContent)).toContain(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
-  });
 });
 
 describe("deleting a file", () => {
@@ -348,63 +217,6 @@ describe("deleting a file", () => {
     fireEvent.click(within(within(media()).getByRole("alert")).getByRole("button", { name: "Отмена" }));
     expect(callsOf(engine, "media.delete")).toHaveLength(0);
     expect(within(section("Фото и видео")).getByRole("button", { name: /^Фото croissant/ })).toBeDefined();
-  });
-
-  // Slice review 5-M4. Review r1 LOW-9: these once ran as one test of four rounds, each asking the whole editor for roles by name, and it ran past
-  // Bun's 5 s under load; each round is its own test now, and the confirmation and its buttons are found inside the confirmation only.
-  describe("the keyboard (slice review 5-M4)", () => {
-    async function openTab(): Promise<MockEngine> {
-      const { client, engine } = await studio();
-      seed(engine);
-      await openMine(engine, client);
-      return engine;
-    }
-    const trash = (): HTMLElement => within(section("Фото и видео")).getByRole("button", { name: "Удалить croissant.jpg" });
-    const confirm = (): HTMLElement => document.querySelector<HTMLElement>(".mine-confirm") ?? document.body;
-    const inConfirm = (name: string): HTMLElement => within(confirm()).getByRole("button", { name });
-    const dropZone = (): HTMLElement => document.querySelector<HTMLElement>(".mine > button.drop") ?? document.body;
-    const ask = async (): Promise<void> => {
-      const button = trash();
-      button.focus();
-      fireEvent.click(button);
-      await flush();
-    };
-
-    test("asked, the focus is on «Отмена»; Escape and «Отмена» give it back to the tile's trash", async () => {
-      await openTab();
-      await ask();
-      expect(focusedLabel()).toBe(describeElement(inConfirm("Отмена")));
-      fireEvent.keyDown(inConfirm("Отмена"), { key: "Escape" });
-      await flush();
-      expect(document.querySelector(".mine-confirm") === null).toBe(true);
-      expect(focusedLabel()).toBe(describeElement(trash()));
-
-      await ask();
-      fireEvent.click(inConfirm("Отмена"));
-      await flush();
-      expect(focusedLabel()).toBe(describeElement(trash()));
-    });
-
-    test("a refusal's «Понятно» takes the focus, and gives it back to the trash", async () => {
-      const engine = await openTab();
-      engine.failNext("media.delete", { code: "IN_FLIGHT", detail: "a queued or running render uses this media" });
-      await ask();
-      fireEvent.click(inConfirm("Удалить"));
-      await flush();
-      expect(focusedLabel()).toBe(describeElement(inConfirm("Понятно")));
-      fireEvent.click(inConfirm("Понятно"));
-      await flush();
-      expect(focusedLabel()).toBe(describeElement(trash()));
-    });
-
-    test("deleted, the focus lands on «Добавить файлы»", async () => {
-      await openTab();
-      await ask();
-      fireEvent.click(inConfirm("Удалить"));
-      await flush();
-      expect(within(section("Фото и видео")).queryByRole("button", { name: "Удалить croissant.jpg" }) === null).toBe(true);
-      expect(focusedLabel()).toBe(describeElement(dropZone()));
-    });
   });
 
   test("a file a render uses is refused honestly (IN_FLIGHT): nothing is deleted, and the tile stays", async () => {

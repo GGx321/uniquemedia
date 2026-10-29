@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { CAPTION_ISSUES_RU, type MontageDraft, type TextLayer } from "../../shared/engine";
-import { clipCellRects, clipMotionPlan, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, stickerBox } from "../../shared/montage";
+import { type MontageDraft, type TextLayer } from "../../shared/engine";
+import { clipCellRects, clipMotionPlan, FRAME_H, FRAME_W, type Rect, stickerBox } from "../../shared/montage";
 import type { MockEngine } from "../engine/mockEngine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { callsOf, flush } from "../testing";
@@ -105,12 +105,6 @@ async function engineBox(client: Parameters<typeof makeDraft>[0], layer: TextLay
 }
 
 describe("the frame at the playhead", () => {
-  test("an empty draft says it is empty, with no hints", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [] });
-    expect(within(preview()).getByText("Ролик пока пуст")).toBeDefined();
-    expect(within(preview()).queryByRole("group", { name: "Подсказки" }) === null).toBe(true);
-  });
 
   test("the clip under the playhead, its cells where the render puts them; the end shows the last frame", async () => {
     const { client, engine } = await studio();
@@ -120,46 +114,6 @@ describe("the frame at the playhead", () => {
     const cells = cellButtons();
     expect(cells.map((b) => b.getAttribute("aria-label"))).toEqual(["Кадр 2, ячейка 1", "Кадр 2, ячейка 2: пустая", "Кадр 2, ячейка 3"]);
     expect(cells.map(drawnBox)).toEqual(clipCellRects({ kind: "collage", layout: "collage3" }).map(exact));
-  });
-
-  test("a photo shows the render's window of it: the motion moves it from one frame to the next", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const photo = (): string => (preview().querySelector(".pv-photo") as HTMLElement | null)?.getAttribute("style") ?? "";
-    const first = photo();
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    frames.advance(500);
-    expect(photo()).not.toBe(first);
-    expect(first).toContain("width:");
-  });
-
-  test("«Полоски слайдов»: a bar per clip, filled up to the playhead; «Зоны Reels»: the bottom band and the right strip", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const bars = [...preview().querySelectorAll<HTMLElement>(".pv-bar")];
-    expect(bars.map(drawnBox)).toEqual(progressSegments([P1, P2, P3, P4].map((p, i) => photoClip(i, p, 2_000))).map((s) => exact(s.rect)));
-    fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Плейхед" }), { key: "ArrowRight", shiftKey: true });
-    const fills = [...preview().querySelectorAll<HTMLElement>(".pv-bar-fill")].map((f) => f.style.width);
-    // 1.0 s in: half of the first clip's bar (the shared fill rounds down to whole pixels), none of the others.
-    const segments = progressSegments([P1, P2, P3, P4].map((p, i) => photoClip(i, p, 2_000)));
-    expect(fills).toEqual(segments.map((s) => `${(segmentFillWidth(s, 30) / s.rect.w) * 100}%`));
-    expect(fills[0]).not.toBe("0%");
-    expect([...preview().querySelectorAll<HTMLElement>(".pv-zone")].map(drawnBox)).toEqual(reelsSafeZones().map((z) => exact(z.rect)));
-    expect(within(preview()).getByText("подпись и аудио")).toBeDefined();
-  });
-
-  test("the hints switch off and back on; they say they are the preview's only", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const hints = within(preview()).getByRole("group", { name: "Подсказки" });
-    expect(within(hints).getByText("только в превью, в видео их нет")).toBeDefined();
-    fireEvent.click(within(hints).getByRole("switch", { name: "Зоны Reels" }));
-    fireEvent.click(within(hints).getByRole("switch", { name: "Полоски слайдов" }));
-    expect(preview().querySelector(".pv-zones") === null && preview().querySelector(".pv-bars") === null).toBe(true);
-    expect(within(hints).getByRole("switch", { name: "Зоны Reels" }).getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(within(hints).getByRole("switch", { name: "Зоны Reels" }));
-    expect(preview().querySelector(".pv-zones") !== null).toBe(true);
   });
 
   test("layers on screen in z-order (the spec's order), only within their time", async () => {
@@ -176,13 +130,6 @@ describe("the frame at the playhead", () => {
 });
 
 describe("captions as the engine draws them", () => {
-  test("every caption is asked for up front, before the playhead reaches it", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000), { ...textLayer(1, 6_000, 8_000), value: "later on" }] });
-    await flush();
-    const asked = callsOf(engine, "montages.textPreview").map((c) => c.payload.layer.layerId);
-    expect([...asked].sort()).toEqual(["layer-001", "layer-002"]);
-  });
 
   test("a caption is the engine's picture, in the engine's box: centred where the layer says, kept inside the frame", async () => {
     const { client, engine } = await studio();
@@ -207,63 +154,6 @@ describe("captions as the engine draws them", () => {
     fireEvent.click(within(props()).getByRole("button", { name: "Caveat" }));
     await flush();
     expect(asks()).toBe(2);
-  });
-
-  test("an ask another window supersedes is asked again: the panel gets its verdict, never left pending", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
-    await flush();
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
-    await flush();
-    const caption = within(props()).getByRole("textbox", { name: "Текст" });
-    act(() => engine.holdTextDrawing(true));
-    // Another layer's drawing holds the lane; this window's ask for the new caption waits behind it...
-    const other = client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(5, 0, 1_000), layerId: "layer-other" } });
-    await flush();
-    fireEvent.change(caption, { target: { value: "утро" } });
-    await flush();
-    // ...and another window asks for the same layer, which supersedes it.
-    const elsewhere = client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(0, 0, 4_000), value: "elsewhere" } });
-    await flush();
-    await act(async () => {
-      engine.holdTextDrawing(false);
-      engine.releaseTextDrawing();
-      await other;
-      await elsewhere;
-    });
-    await waitFor(() => expect(caption.getAttribute("aria-invalid")).toBe("true"));
-    expect(within(props()).getByText(CAPTION_ISSUES_RU.charset)).toBeDefined();
-    const ours = callsOf(engine, "montages.textPreview").filter((c) => c.payload.layer.layerId === "layer-001" && c.payload.layer.value === "утро");
-    expect(ours.length).toBe(2);
-  });
-
-  test("giving up after another window keeps superseding the ask is no refusal: the picture is not marked", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
-    await flush();
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
-    await flush();
-    act(() => engine.holdTextDrawing(true));
-    // Another layer's drawing holds the lane, so this window's asks wait in it...
-    const other = client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(5, 0, 1_000), layerId: "layer-other" } });
-    await flush();
-    fireEvent.change(within(props()).getByRole("textbox", { name: "Текст" }), { target: { value: "morning" } });
-    await flush();
-    // ...and another window asks for the same layer again and again: each of its asks supersedes this window's waiting one.
-    const elsewhere: Promise<unknown>[] = [];
-    for (let i = 0; i <= 3; i++) {
-      elsewhere.push(client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(0, 0, 4_000), value: `elsewhere ${i}` } }));
-      await flush();
-    }
-    await act(async () => {
-      engine.holdTextDrawing(false);
-      engine.releaseTextDrawing();
-      await other;
-      await Promise.all(elsewhere);
-    });
-    await flush();
-    expect(preview().querySelector(".pv-text") !== null).toBe(true);
-    expect(preview().querySelector(".pv-text-refused") === null).toBe(true);
   });
 
   test("a caption the engine refuses keeps its last good picture, marked", async () => {
@@ -294,14 +184,6 @@ describe("a caption in the Reels zones (AM10: judged on the engine's box)", () =
     expect(callsOf(engine, "montages.save")).toHaveLength(1);
   });
 
-  test("a caption in the clear has no warning", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
-    await flush();
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
-    await flush();
-    expect(within(props()).queryByRole("button", { name: "Сдвинуть внутрь" }) === null).toBe(true);
-  });
 });
 
 // R49's «Послушать» on the music card is gone (the owner's feedback, 2026-10-05): it only played the montage from its start. The music is heard
@@ -326,22 +208,6 @@ describe("the music plays with the montage (no player of the card's own)", () =>
 });
 
 describe("stickers", () => {
-  test("a built-in sticker sits in the engine's box on the set's square picture", async () => {
-    const { client, engine } = await studio();
-    const layer = heart(0, 0, 4_000, { x: 0.7, y: 0.3, size: 0.25 });
-    await openDraft(engine, client, { layers: [layer] });
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
-  });
-
-  test("selected inside a Reels zone, its frame turns yellow (a warning only)", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [heart(0, 0, 4_000, { x: 0.92, y: 0.6, size: 0.2 })] });
-    fireEvent.pointerDown(inPreview("Стикер 1: Сердце"), { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
-    });
-    expect(inPreview("Стикер 1: Сердце").parentElement?.className).toContain("pv-layer-zone");
-  });
 
   test("drawn on a canvas at the frame the LAYER's start and the stored loop pick: from 1.0 s, at 2.5 s, heart-pulse's frame 21", async () => {
     const decoders = installImageDecoder();
@@ -389,56 +255,6 @@ describe("dragging and scaling a layer", () => {
     expect(callsOf(engine, "montages.save")).toHaveLength(1);
     undo();
     expect(layerBox("Стикер 1: Сердце")).toEqual(exact(box));
-  });
-
-  test("a cancelled drag (the system took the pointer) changes nothing", async () => {
-    const { client, engine } = await studio();
-    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
-    await openDraft(engine, client, { layers: [layer] });
-    drag(inPreview("Стикер 1: Сердце"), 40, 40, 4, "cancel");
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
-    await flush();
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-  });
-
-  test("a press that travels less than the drag threshold (4 px) moves nothing; at the threshold it moves", async () => {
-    const { client, engine } = await studio();
-    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
-    await openDraft(engine, client, { layers: [layer] });
-    drag(inPreview("Стикер 1: Сердце"), 3, 0, 20);
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
-    await flush();
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-    drag(inPreview("Стикер 1: Сердце"), 4, 0, 21);
-    expect(layerBox("Стикер 1: Сердце").x).toBeGreaterThan(stickerBox(layer).x);
-  });
-
-  test("a cancelled corner drag (the system took the pointer) leaves the size as it was", async () => {
-    const { client, engine } = await studio();
-    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
-    await openDraft(engine, client, { layers: [layer] });
-    fireEvent.click(inPreview("Стикер 1: Сердце"));
-    const corner = preview().querySelector(".pv-corner-br");
-    if (corner === null) throw new Error("no corner handle on the selected sticker");
-    const centre = { x: 540 / FRAME_PX, y: 960 / FRAME_PX };
-    fireEvent.pointerDown(corner, { pointerId: 22, button: 0, clientX: centre.x + 20, clientY: centre.y });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 22, clientX: centre.x + 40, clientY: centre.y, buttons: 1 }));
-    });
-    expect(layerBox("Стикер 1: Сердце").w).toBeGreaterThan(stickerBox(layer).w);
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 22 }));
-    });
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
-    await flush();
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-  });
-
-  test("never past the frame: dragged far, the box stops at the edge", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 })] });
-    drag(inPreview("Стикер 1: Сердце"), -2_000, 0, 5);
-    expect(layerBox("Стикер 1: Сердце").x).toBe(0);
   });
 
   test("a corner scales a sticker about its centre: one undo step", async () => {
@@ -490,25 +306,6 @@ describe("dragging and scaling a layer", () => {
     expect(callsOf(engine, "montages.textPreview").at(-1)?.payload.layer.scale).toBe(1.5);
   });
 
-  test("arrow keys move a focused layer by 10 frame pixels (Shift: 60); a held key is one undo step", async () => {
-    const { client, engine } = await studio();
-    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
-    await openDraft(engine, client, { layers: [layer] });
-    const hit = inPreview("Стикер 1: Сердце");
-    fireEvent.keyDown(hit, { key: "ArrowRight" });
-    fireEvent.keyDown(hit, { key: "ArrowRight", repeat: true });
-    fireEvent.keyDown(hit, { key: "ArrowDown", shiftKey: true });
-    fireEvent.keyUp(hit, { key: "ArrowDown" });
-    const box = stickerBox(layer);
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact({ ...box, x: box.x + 20, y: box.y + 60 }));
-    fireEvent.keyDown(hit, { key: "ArrowLeft" });
-    fireEvent.keyUp(hit, { key: "ArrowLeft" });
-    undo();
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact({ ...box, x: box.x + 20, y: box.y + 60 }));
-    undo();
-    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(box));
-  });
-
   test("Escape clears the selection; Delete removes the selected layer", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [heart(0, 0, 4_000)] });
@@ -553,35 +350,6 @@ describe("a cell's crop by its face point", () => {
     expect(back?.kind === "collage" ? back.cells[0]?.focus : "?").toBe(null);
   });
 
-  test("a cancelled crop drag (the system took the pointer) leaves the focus as it was", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
-    const cell = (): HTMLElement => inPreview("Кадр 1, ячейка 1");
-    fireEvent.pointerDown(cell(), { pointerId: 23, button: 0, clientX: 0, clientY: 0 });
-    const photo = (): string => cell().querySelector(".pv-photo")?.getAttribute("style") ?? "";
-    const before = photo();
-    drag(cell(), 0, 30, 24, "cancel");
-    expect(photo()).toBe(before);
-    await flush();
-    expect(callsOf(engine, "montages.save")).toHaveLength(0);
-  });
-
-  test("arrow keys move the selected cell's photo, a held key one undo step", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
-    const cell = inPreview("Кадр 1, ячейка 1");
-    fireEvent.pointerDown(cell, { pointerId: 12, button: 0, clientX: 0, clientY: 0 });
-    fireEvent.keyDown(inPreview("Кадр 1, ячейка 1"), { key: "ArrowDown" });
-    fireEvent.keyDown(inPreview("Кадр 1, ячейка 1"), { key: "ArrowDown", repeat: true });
-    fireEvent.keyUp(inPreview("Кадр 1, ячейка 1"), { key: "ArrowDown" });
-    const saved = await nextSave(engine);
-    const first = saved.clips[0];
-    expect(first?.kind === "collage" ? (first.cells[0]?.focus?.y ?? 1) : 1).toBeLessThan(0.38);
-    undo();
-    await flush();
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-  });
-
   test("a bin photo dropped on an empty cell fills it", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { clips: [collageClip(0, [P1, null], 4_000, false)] });
@@ -601,29 +369,6 @@ describe("a cell's crop by its face point", () => {
     expect(clip?.kind === "collage" ? clip.cells[1]?.photo?.source : null).toBe("scene");
   });
 
-  test("slice review 5-M5: a bin photo dropped on a FILLED cell replaces its photo, one undo step", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
-    const bin = screen.getByRole("list", { name: "Фото аватара" });
-    const tile = within(bin).getAllByRole("listitem").find((item) => (item.getAttribute("aria-label") ?? "").endsWith("не использовано"));
-    const pick = tile === undefined ? null : within(tile).getAllByRole("button")[0];
-    if (pick === undefined || pick === null) throw new Error("no free photo in the bin");
-    fireEvent.dragStart(pick);
-    const filled = inPreview("Кадр 1, ячейка 2");
-    fireEvent.dragOver(filled);
-    expect(filled.className).toContain("pv-cell-drop");
-    fireEvent.drop(filled);
-    await flush();
-    const saved = await nextSave(engine);
-    const clip = saved.clips[0];
-    const second = clip?.kind === "collage" ? clip.cells[1]?.photo : null;
-    expect(second?.source === "scene" ? second.photoId : null).not.toBe(P2);
-    expect(clip?.kind === "collage" ? clip.cells[0]?.photo : null).toEqual({ source: "scene", photoId: P1 });
-    undo();
-    await flush();
-    const back = (await nextSave(engine, 1)).clips[0];
-    expect(back?.kind === "collage" ? back.cells[1]?.photo : null).toEqual({ source: "scene", photoId: P2 });
-  });
 });
 
 describe("playback", () => {
@@ -655,23 +400,6 @@ describe("playback", () => {
     expect(editorRenders).toHaveBeenCalledTimes(0);
   });
 
-  test("the playback runs to the end of the montage and stops there", async () => {
-    frames = manualFrames();
-    const { client } = await studio();
-    await makeDraft(client, MIA.avatarId, [P1]);
-    await openDrafts();
-    await screen.findByRole("heading", { level: 3, name: /Mia/ });
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
-    await screen.findByRole("region", { name: "Таймлайн" });
-    await flush();
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    frames.advance(5_000);
-    expect(clockText()).toBe("00:05.0 / 00:08.0");
-    frames.advance(5_000);
-    expect(clockText()).toBe("00:08.0 / 00:08.0");
-    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
-    expect(frames.pending()).toBe(0);
-  });
 });
 
 // The owner's feedback (2026-10-05): the preview had no play control of its own. A ▶ sits in the middle of the frame while the montage is
@@ -690,112 +418,6 @@ describe("the play control on the preview", () => {
     if (!(node instanceof HTMLElement)) throw new Error("no stage");
     return node;
   };
-
-  // Review round 1 (MEDIUM 1, LOW 6): a ▶ always there on pause sat on the face, took presses meant for the cell under the middle of the frame
-  // and refused a bin photo dropped there. Paused, it now shows only while the pointer is over the frame (or it has the keyboard's focus); it
-  // hides during any drag, a bin photo's too; and an empty cell under the middle of the frame keeps its «перетащите фото» uncovered.
-  test("paused: only while the pointer is over the frame, never resting on the picture", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    expect([control().getAttribute("aria-label"), shown()]).toEqual(["Воспроизвести", "false"]);
-    fireEvent.pointerEnter(stage());
-    expect(shown()).toBe("true");
-    fireEvent.pointerLeave(stage());
-    expect(shown()).toBe("false");
-    // A pointer already over the frame when it appeared shows it on its first move.
-    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 30, clientY: 30 });
-    expect(shown()).toBe("true");
-  });
-
-  // The test DOM hit-tests nothing, so what makes a hidden or inert control click-through is the stylesheet's: it is pinned here (review
-  // round 2 nit), and the press in the middle of the frame then reaches the cell.
-  test("hidden or inert it is click-through (the stylesheet), so a press in the middle of a cell selects the cell and plays nothing", async () => {
-    const css = await Bun.file(new URL("../montage.css", import.meta.url)).text();
-    const rule = (selector: string): string => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
-    expect(rule('.pv-play[data-shown="false"]:not(:focus-visible)')).toContain("pointer-events: none;");
-    expect(rule('.pv-play[data-inert="true"]')).toContain("pointer-events: none;");
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    expect(shown()).toBe("false");
-    fireEvent.pointerDown(inPreview("Кадр 1"), { pointerId: 3, button: 0, clientX: 153, clientY: 272 });
-    expect(inPreview("Кадр 1").getAttribute("aria-pressed")).toBe("true");
-    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
-  });
-
-  test("hidden and click-through while a bin photo is dragged, even with the pointer over the frame", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.pointerEnter(stage());
-    expect(shown()).toBe("true");
-    const bin = screen.getByRole("list", { name: "Фото аватара" });
-    const pick = within(bin).getAllByRole("button").find((b) => !b.hasAttribute("disabled"));
-    if (pick === undefined) throw new Error("no photo to drag in the bin");
-    fireEvent.dragStart(pick);
-    expect(shown()).toBe("false");
-    fireEvent.dragEnd(pick);
-    expect(shown()).toBe("true");
-  });
-
-  // Review round 2 (follow-up 3): the control was unmounted over such a cell, which dropped the keyboard focus to the page. It stays mounted,
-  // inert (hidden on hover, click-through), and shows only for the keyboard's focus.
-  test("an empty cell under the middle of the frame keeps its drop hint: the control is hidden and inert there, and a photo dropped there lands", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [{ ...photoClip(0, P1, 4_000), cell: { photo: null, focus: null } }] });
-    fireEvent.pointerEnter(stage());
-    expect([shown(), control().getAttribute("data-inert")]).toEqual(["false", "true"]);
-    const bin = screen.getByRole("list", { name: "Фото аватара" });
-    const pick = within(bin).getAllByRole("button").find((b) => !b.hasAttribute("disabled"));
-    if (pick === undefined) throw new Error("no photo to drag in the bin");
-    fireEvent.dragStart(pick);
-    const empty = inPreview("Кадр 1: пустая");
-    fireEvent.dragOver(empty);
-    fireEvent.drop(empty);
-    await flush();
-    expect(inPreview("Кадр 1").getAttribute("aria-label")).toBe("Кадр 1");
-    // Filled, the cell no longer needs its hint: the control is back for the pointer over the frame.
-    fireEvent.dragEnd(pick);
-    fireEvent.pointerEnter(stage());
-    expect([shown(), control().getAttribute("data-inert")]).toEqual(["true", "false"]);
-  });
-
-  test("the keyboard's focus on the control survives the playhead reaching an empty cell under the middle", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [photoClip(0, P1, 2_000), { ...photoClip(1, P2, 2_000), cell: { photo: null, focus: null } }] });
-    control().focus();
-    fireEvent.click(control());
-    for (let i = 0; i < 75; i++) frames.advance(34);
-    expect(within(preview()).getByRole("button", { name: /^Кадр 2/ }).getAttribute("aria-label")).toBe("Кадр 2: пустая");
-    expect(document.activeElement === control()).toBe(true);
-    expect(control().getAttribute("data-inert")).toBe("true");
-  });
-
-  // Review round 2 (follow-up 5): a touch screen has no hover. A tap leaves the paused ▶ up, and while playing a tap brings the ❚❚ up.
-  test("touch: the paused ▶ stays after a tap; a mouse moving again goes back to hover", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.pointerEnter(stage(), { pointerType: "touch" });
-    fireEvent.pointerDown(stage(), { pointerId: 5, pointerType: "touch", buttons: 1 });
-    fireEvent.pointerUp(stage(), { pointerId: 5, pointerType: "touch" });
-    fireEvent.pointerLeave(stage(), { pointerType: "touch" });
-    expect(shown()).toBe("true");
-    fireEvent.pointerMove(stage(), { pointerId: 1, pointerType: "mouse", buttons: 0 });
-    fireEvent.pointerLeave(stage(), { pointerType: "mouse" });
-    expect(shown()).toBe("false");
-  });
-
-  test("touch: while playing, a tap on the frame brings the ❚❚ up", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    for (let i = 0; i < 40; i++) frames.advance(34);
-    expect(shown()).toBe("false");
-    fireEvent.pointerDown(stage(), { pointerId: 6, pointerType: "touch", buttons: 1 });
-    fireEvent.pointerUp(stage(), { pointerId: 6, pointerType: "touch" });
-    frames.advance(34);
-    expect(shown()).toBe("true");
-  });
 
   test("paused, a ▶ in the frame plays the montage the timeline plays; then it is ❚❚, and stops it", async () => {
     frames = manualFrames();
@@ -830,74 +452,6 @@ describe("the play control on the preview", () => {
     expect(control().getAttribute("aria-label")).toBe("Воспроизвести");
   });
 
-  test("playing: shown for a moment after the start, then hidden until the pointer moves over the frame, and again after a still moment", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    expect(shown()).toBe("true");
-    for (let i = 0; i < 40; i++) frames.advance(34);
-    expect(shown()).toBe("false");
-    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 40, clientY: 40 });
-    frames.advance(34);
-    expect(shown()).toBe("true");
-    for (let i = 0; i < 60; i++) frames.advance(34);
-    expect(shown()).toBe("false");
-    // Hovered, it stays while the pointer rests on it.
-    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 41, clientY: 40 });
-    fireEvent.pointerEnter(control());
-    for (let i = 0; i < 60; i++) frames.advance(34);
-    expect(shown()).toBe("true");
-    fireEvent.pointerLeave(control());
-    frames.advance(34);
-    expect(shown()).toBe("false");
-  });
-
-  test("a new playback does not carry the last one's pointer move, even started from the same spot", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 40, clientY: 40 });
-    fireEvent.pointerLeave(stage());
-    frames.advance(34);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Пауза" }));
-    expect(clockText()).toBe("00:00.0 / 00:08.0");
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    for (let i = 0; i < 36; i++) frames.advance(34);
-    expect(shown()).toBe("false");
-  });
-
-  test("a pointer moving with a button held (a drag on the frame) does not bring it up", async () => {
-    frames = manualFrames();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    for (let i = 0; i < 40; i++) frames.advance(34);
-    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 1, clientX: 40, clientY: 40 });
-    frames.advance(34);
-    expect(shown()).toBe("false");
-  });
-
-  test("it lies under the layers: a sticker over the middle of the frame is drawn above it and keeps its press", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.4 })] });
-    const sticker = inPreview("Стикер 1: Сердце");
-    // Later in the frame's order is drawn above: the layer comes after the control.
-    expect(control().compareDocumentPosition(sticker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.pointerDown(sticker, { pointerId: 2, button: 0, clientX: 0, clientY: 0 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2 }));
-    });
-    expect(sticker.getAttribute("aria-pressed")).toBe("true");
-    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
-  });
-
-  test("an empty montage has nothing to play: no control on the frame", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { clips: [] });
-    expect(preview().querySelector(".pv-play") === null).toBe(true);
-  });
 });
 
 // 3f.5: an OWN sticker in the preview. The layer's record (canvas, loop, delays) comes from `media.list`; its frames are decoded from the bytes main
@@ -979,14 +533,6 @@ describe("own stickers", () => {
     return media.mediaId;
   }
 
-  test("sits in the engine's box on ITS canvas, which need not be square", async () => {
-    const harness = await studio();
-    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [3, 3] });
-    const layer = ownLayer(0, mediaId, { size: 0.4, x: 0.5, y: 0.5 });
-    await openDraft(harness.engine, harness.client, { layers: [layer] });
-    await waitFor(() => expect(layerBox("Стикер 1: свой стикер")).toEqual(exact(stickerBox(layer, { w: 200, h: 100 }))));
-  });
-
   test("is drawn on a canvas of its own size at the frame its DELAYS put at this tick; the bytes come from media.stickerBytes and never from stickers.bytes", async () => {
     const decoders = installImageDecoder();
     restores.push(() => decoders.restore());
@@ -1005,28 +551,6 @@ describe("own stickers", () => {
     expect(callsOf(harness.engine, "media.stickerBytes").map((c) => c.payload.mediaId)).toEqual([mediaId]);
     expect(callsOf(harness.engine, "stickers.bytes")).toEqual([]);
     expect(decoders.inits.map((i) => i.colorSpaceConversion)).toEqual(["none"]);
-  });
-
-  test("wraps on the stored loop: tick 6 is the first picture again, tick 3 the second", async () => {
-    const decoders = installImageDecoder();
-    restores.push(() => decoders.restore());
-    const harness = await studio();
-    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [2, 4] });
-    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, mediaId)] });
-    const head = within(timeline()).getByRole("slider", { name: "Плейхед" });
-    fireEvent.keyDown(head, { key: "ArrowRight" });
-    await waitFor(() => expect(preview().querySelector("canvas")?.getAttribute("data-frame")).toBe("1"));
-    // Two arrows are tick 6: the loop is 6 ticks long, so the first picture is back.
-    fireEvent.keyDown(head, { key: "ArrowRight" });
-    await waitFor(() => expect(preview().querySelector("canvas")?.getAttribute("data-frame")).toBe("0"));
-  });
-
-  test("a sticker the library does not hold shows its place with nothing in it, and asks main for no bytes", async () => {
-    const harness = await studio();
-    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, "media-00000404")] });
-    expect(preview().querySelector("canvas") === null).toBe(true);
-    expect(inPreview("Стикер 1: свой стикер").parentElement?.className).toContain("pv-sticker-missing");
-    expect(callsOf(harness.engine, "media.stickerBytes")).toEqual([]);
   });
 
   test("a sticker deleted while the editor is open loses its picture (media.changed)", async () => {

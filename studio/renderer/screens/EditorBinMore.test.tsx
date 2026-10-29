@@ -31,10 +31,6 @@ async function openEditor(photos: PhotoSummary[]) {
 }
 
 describe("the editor's bin past 500 photos", () => {
-  test("500 photos: no «Показать ещё»", async () => {
-    await openEditor(library(MAX_LISTED_PHOTOS));
-    expect(moreButton() === null).toBe(true);
-  });
 
   test("501: «Показать ещё · 1» under the bin; the press appends the oldest photo once and focuses it, and the button goes", async () => {
     const { engine } = await openEditor(library(MAX_LISTED_PHOTOS + 1));

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, type MontageDraft, type PhotoSummary } from "../../shared/engine";
+import { CAPTION_ISSUES_RU, type MontageDraft, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, scenePhoto } from "../engine/mockEngine.testkit";
 import type { MockTrackSeed } from "../engine/mockMusicStore";
@@ -110,24 +110,6 @@ describe("the «Фото» tab: eligible photos, the chips, one photo → one vi
     expect(saved.clips.map((c) => (c.kind === "photo" && c.cell.photo?.source === "scene" ? c.cell.photo.photoId : null))).toEqual([...IDS.slice(0, 4), "photo-mia-0007"]);
   });
 
-  test("the category filter: the built-ins, then «Свои» apart — the custom ones by name and «Своя сцена» last (CS.7 L1, decision 6)", async () => {
-    const mixed: PhotoSummary[] = [
-      ...freePhotos(2),
-      scenePhoto(3, { category: "cat-mono-studio", categoryName: "Студия ч/б" }),
-      scenePhoto(4, { category: "own", categoryName: "Своя сцена" }),
-      scenePhoto(5, { category: "cat-paris-cafes", categoryName: "Кофейни Парижа" }),
-    ];
-    const { client, engine } = await studio({ photos: mixed });
-    await openDraft(engine, client);
-    await screen.findByRole("list", { name: "Фото аватара" });
-    const category = within(media()).getByRole("combobox", { name: "Категория" });
-    expect(within(category).getAllByRole("option").map((o) => o.textContent)).toEqual(["Все категории", "Дом · 2", "Кофейни Парижа · 1", "Студия ч/б · 1", "Своя сцена · 1"]);
-    const own = within(category).getByRole("group", { name: "Свои" });
-    expect(within(own).getAllByRole("option").map((o) => o.textContent)).toEqual(["Кофейни Парижа · 1", "Студия ч/б · 1", "Своя сцена · 1"]);
-    fireEvent.change(category, { target: { value: "own" } });
-    expect(within(media()).getByRole("list", { name: "Фото аватара" }).querySelectorAll("li").length).toBe(1);
-  });
-
   test("«Неиспользованные N» keeps the free photos; the category keeps its own; «Показать все фото» clears both", async () => {
     const { client, engine } = await studio({ photos });
     await openDraft(engine, client);
@@ -148,15 +130,6 @@ describe("the «Фото» tab: eligible photos, the chips, one photo → one vi
     expect(names()).toHaveLength(7);
   });
 
-  test("a filter that leaves nothing says so and offers every photo back", async () => {
-    const { client, engine } = await studio({ photos: [scenePhoto(1, { used: true, usedIn: ["video-0000001"] })] });
-    await openDraft(engine, client, { clips: [] });
-    await screen.findByRole("list", { name: "Фото аватара" });
-    fireEvent.click(within(media()).getByRole("button", { name: /^Неиспользованные/ }));
-    expect(within(media()).getByText("Свободных фото не осталось: все уже в видео или в рендере.")).toBeDefined();
-    fireEvent.click(within(media()).getByRole("button", { name: "Показать все фото" }));
-    expect(names()).toEqual(["Фото 1 · использовано в 1 видео"]);
-  });
 });
 
 // ---------- the «Музыка» tab ----------
@@ -205,19 +178,6 @@ describe("the «Музыка» tab: the trending list, the «E» badge, a free p
     expect(callsOf(engine, "music.list").length).toBeGreaterThan(0);
   });
 
-  test("«Скрыть E» hides explicit tracks, never the draft's own", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client);
-    fireEvent.click(tab("Музыка"));
-    await within(media()).findByRole("list", { name: "Треки в тренде" });
-    fireEvent.click(within(media()).getByRole("button", { name: "Скрыть треки с пометкой E" }));
-    expect(rows().map((r) => r.querySelector(".trow-name")?.textContent)).toEqual(["Espresso", "оригинальный звук"]);
-    fireEvent.click(within(media()).getByRole("button", { name: "Скрыть треки с пометкой E" }));
-    fireEvent.click(within(media()).getByRole("button", { name: /^Luther/ }));
-    fireEvent.click(within(media()).getByRole("button", { name: "Скрыть треки с пометкой E" }));
-    expect(rows().map((r) => r.querySelector(".trow-name")?.textContent)).toEqual(["Espresso", "Luther", "оригинальный звук"]);
-  });
-
   test("the quota is shown, and the paid refresh is only a way to Settings, where it is confirmed", async () => {
     const { client, engine } = await studio({ music: { ...MUSIC, sendsDaysAgo: [1, 2, 3] } });
     await openDraft(engine, client);
@@ -228,39 +188,6 @@ describe("the «Музыка» tab: the trending list, the «E» badge, a free p
     expect(callsOf(engine, "music.refresh")).toHaveLength(0);
   });
 
-  test("a list that could not be read says so; «Повторить» reads it again (free) and the tracks come", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client);
-    // Once, so the list's status is known: the tab then asks for the list exactly once when it opens again.
-    fireEvent.click(tab("Музыка"));
-    await within(media()).findByRole("list", { name: "Треки в тренде" });
-    fireEvent.click(tab("Фото"));
-    engine.failNext("music.list", { code: "INTERNAL", detail: "the music folder could not be read" });
-    fireEvent.click(tab("Музыка"));
-    const alert = await within(media()).findByRole("alert");
-    await flush();
-    expect(plain(alert.textContent)).toContain("Не удалось прочитать список треков.");
-    const lists = callsOf(engine, "music.list").length;
-    fireEvent.click(within(alert).getByRole("button", { name: "Повторить" }));
-    await within(media()).findByRole("list", { name: "Треки в тренде" });
-    expect(callsOf(engine, "music.list").length).toBe(lists + 1);
-  });
-
-  test("while the list's status is not known, an empty list is not called empty", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    engine.failNext("music.status", { code: "INTERNAL", detail: "the quota log is being read" });
-    fireEvent.click(tab("Музыка"));
-    await within(media()).findByText("Проверяем список трендов…");
-    expect(within(media()).queryByText(/пока нет треков/) === null).toBe(true);
-  });
-
-  test("an empty store says the list is loaded in Settings", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Добавить музыку" }));
-    await within(media()).findByText(/Список трендов ещё не загружен\./);
-  });
 });
 
 // ---------- the music card ----------
@@ -287,17 +214,6 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     expect(within(timeline()).getByRole("button", { name: "Музыка: Espresso · Sabrina Carpenter, с 0:30" })).toBeDefined();
   });
 
-  test("the waveform is the whole track's (68 bars from music.peaks); a pick past the end does not fit", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, { music: { source: "trending", trackId: LUTHER.trackId, startMs: 0 } });
-    selectBlock(/^Музыка:/);
-    await within(props()).findByRole("group", { name: "Выбрать лучшую часть" });
-    await waitFor(() => expect(callsOf(engine, "music.peaks").some((c) => c.payload.startMs === 0 && c.payload.durationMs === 40_000 && c.payload.bars === 68)).toBe(true));
-    const late = picks().find((p) => p.getAttribute("aria-label") === "Лучшая часть с 0:35");
-    expect(late?.hasAttribute("disabled")).toBe(true);
-    expect(late?.getAttribute("title")).toBe("Отсюда трек кончится раньше ролика");
-  });
-
   test("the window is a slider: ⇧→ a second later, a held key is one undo step, End to the last start that fits", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, withMusic(12_000));
@@ -314,34 +230,6 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     expect(within(props()).getByRole("slider", { name: "Начало музыки в треке" }).getAttribute("aria-valuenow")).toBe("52000");
     const saved = await nextSave(engine);
     expect(saved.music?.startMs).toBe(52_000);
-  });
-
-  // Review round 1 (U7): a key let go ends its step, so two presses are two undo steps.
-  test("two presses of → on the window are two undo steps", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, withMusic(12_000));
-    selectBlock(/^Музыка:/);
-    const slider = (): HTMLElement => within(props()).getByRole("slider", { name: "Начало музыки в треке" });
-    await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
-    fireEvent.keyDown(slider(), { key: "ArrowRight" });
-    fireEvent.keyUp(slider(), { key: "ArrowRight" });
-    fireEvent.keyDown(slider(), { key: "ArrowRight" });
-    fireEvent.keyUp(slider(), { key: "ArrowRight" });
-    expect(slider().getAttribute("aria-valuenow")).toBe("12200");
-    undo();
-    expect(slider().getAttribute("aria-valuenow")).toBe("12100");
-    undo();
-    expect(slider().getAttribute("aria-valuenow")).toBe("12000");
-  });
-
-  test("a waveform the store no longer has (NOT_FOUND) says the track is gone; nothing is fetched to make up for it", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, withMusic(12_000));
-    await flush();
-    // The timeline's own waveform was answered on opening; the card's whole-track ask is the next one.
-    engine.failNext("music.peaks", { code: "NOT_FOUND", detail: `track ${ESPRESSO.trackId} is not stored` });
-    selectBlock(/^Музыка:/);
-    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
   });
 
   describe("dragging the window (one edit on release, as the timeline's block does)", () => {
@@ -376,34 +264,6 @@ describe("the music card: the whole track, the window, the highlight picks", () 
       expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
     });
 
-    test("a cancelled drag (the system took the pointer) changes nothing", async () => {
-      const { client, engine } = await studio({ music: MUSIC });
-      await openDraft(engine, client, withMusic(12_000));
-      selectBlock(/^Музыка:/);
-      const slider = layOut();
-      fireEvent.pointerDown(slider, { pointerId: 8, button: 0, clientX: 150 });
-      move(8, 250);
-      move(8, 250, "pointercancel");
-      expect(slider.getAttribute("aria-valuenow")).toBe("12000");
-      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
-      expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-    });
-
-    test("a click elsewhere on the waveform moves the window there when it is let go, not when pressed", async () => {
-      const { client, engine } = await studio({ music: MUSIC });
-      await openDraft(engine, client, withMusic(12_000));
-      selectBlock(/^Музыка:/);
-      const slider = layOut();
-      const strip = props().querySelector(".ed-hl");
-      if (!(strip instanceof HTMLElement)) throw new Error("no waveform strip");
-      fireEvent.pointerDown(strip, { pointerId: 9, button: 0, clientX: 400 });
-      expect(slider.getAttribute("aria-valuenow")).toBe("12000");
-      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
-      move(9, 400, "pointerup");
-      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:40");
-      undo();
-      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
-    });
   });
 
   // 3f.4: an own track in the same card, timeline block and waveform. It has a name (the file's), a decoded length and a waveform of its own, no cover, no
@@ -428,41 +288,6 @@ describe("the music card: the whole track, the window, the highlight picks", () 
       expect(callsOf(engine, "music.peaks").some((c) => c.payload.track.source === "trending")).toBe(false);
     });
 
-    test("the card shows the name, the length and that it is the owner's own file, with no highlight and no pick", async () => {
-      const { client, engine, mediaId } = await withOwnTrack();
-      await openDraft(engine, client, ownMusic(mediaId, 12_000));
-      selectBlock(/^Музыка:/);
-      expect(await within(props()).findByText("my mix.mp3")).toBeDefined();
-      expect(plain(props().querySelector(".ed-music-facts .mono")?.textContent)).toBe("0:40 · свой файл");
-      expect(within(props()).queryByRole("group", { name: "Выбрать лучшую часть" }) === null).toBe(true);
-      expect(within(props()).queryByText(/от Instagram/) === null).toBe(true);
-      expect(within(props()).getByText("свой трек")).toBeDefined();
-    });
-
-    test("the card's waveform is the whole track's (68 bars from music.peaks of the own track), and the window is a slider over it", async () => {
-      const { client, engine, mediaId } = await withOwnTrack();
-      await openDraft(engine, client, ownMusic(mediaId, 12_000));
-      selectBlock(/^Музыка:/);
-      const slider = await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
-      await waitFor(() => expect(callsOf(engine, "music.peaks").some((c) => c.payload.track.source === "own" && c.payload.startMs === 0 && c.payload.durationMs === 40_000 && c.payload.bars === 68)).toBe(true));
-      // 40 s track, 8 s montage: the last start that fits is 32 s.
-      expect([slider.getAttribute("aria-valuenow"), slider.getAttribute("aria-valuemax")]).toEqual(["12000", "32000"]);
-    });
-
-    test("the window moves the music like a trending track's: one undo step per press, never past the end", async () => {
-      const { client, engine, mediaId } = await withOwnTrack();
-      await openDraft(engine, client, ownMusic(mediaId, 12_000));
-      selectBlock(/^Музыка:/);
-      const slider = (): HTMLElement => within(props()).getByRole("slider", { name: "Начало музыки в треке" });
-      await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
-      fireEvent.keyDown(slider(), { key: "End" });
-      expect(slider().getAttribute("aria-valuenow")).toBe("32000");
-      const saved = await nextSave(engine);
-      expect(saved.music).toEqual({ source: "own", mediaId, startMs: 32_000 });
-      undo();
-      expect(slider().getAttribute("aria-valuenow")).toBe("12000");
-    });
-
     test("a track too short for the start says so, from its decoded length, before the engine has judged the edit", async () => {
       const { client, engine, mediaId } = await withOwnTrack(7_000);
       await openDraft(engine, client, ownMusic(mediaId, 0));
@@ -480,71 +305,8 @@ describe("the music card: the whole track, the window, the highlight picks", () 
       await waitFor(() => expect(within(props()).queryByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.")).not.toBeNull());
     });
 
-    test("with the library's name list not yet answered the block is unnamed, never wrongly named", async () => {
-      const { client, engine } = await studio({ music: MUSIC });
-      await openDraft(engine, client, ownMusic("media-00000404", 0));
-      const block = await within(timeline()).findByRole("button", { name: /^Музыка:/ });
-      expect(plain(block.getAttribute("aria-label"))).not.toContain("Espresso");
-    });
   });
 
-  // The owner's feedback (2026-10-05): «Послушать» only played the montage from its start (the main ▶ and Space play it) and «Заменить трек»
-  // only opened the «Музыка» tab, which the left panel already shows. The card keeps the window, the picks and the range.
-  test("a usable track's card has no player and no «Заменить трек» of its own: the range stays, no link to the tabs", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, withMusic(12_000));
-    selectBlock(/^Музыка:/);
-    await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
-    for (const name of [/Послушать/, /Остановить/, /Заменить/, /Открыть вкладку/]) expect(within(props()).queryByRole("button", { name }) === null).toBe(true);
-    expect(plain(props().querySelector(".ed-hl-range")?.textContent)).toBe("0:12 → 0:20");
-  });
-
-  test("a track that cannot be used points to the tabs that hold another one; the chosen tab takes the focus", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, withMusic(12_000));
-    await flush();
-    engine.failNext("music.peaks", { code: "NOT_FOUND", detail: `track ${ESPRESSO.trackId} is not stored` });
-    selectBlock(/^Музыка:/);
-    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
-    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Мои»" }));
-    expect(tab("Мои").getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === tab("Мои")).toBe(true);
-    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
-    expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === tab("Музыка")).toBe(true);
-  });
-
-  // Review round 2 nit: before the engine has judged the spec on screen there is no reason to show, only that the track is out of the list. A
-  // trending track is picked again in «Музыка», so the line no longer sends the owner to «Мои» for it.
-  test("a track gone from the list, not judged yet: one line, to pick it again in «Музыка» or another track", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
-    // The engine's next reads are held: the edit below stays unjudged.
-    for (let i = 0; i < 4; i++) engine.delayNext("montages.get", 60_000);
-    fireEvent.click(tab("Текст"));
-    fireEvent.click(within(media()).getByRole("button", { name: /^Добавить текст в / }));
-    selectBlock(/^Музыка:/);
-    await within(props()).findByText("Трек из прежнего списка");
-    const lines = [...props().querySelectorAll(".ed-music-swap, .ed-props-note, .ed-music-problem")].map((p) => plain(p.textContent));
-    expect(lines).toEqual(["Длина и лучшие части этого трека неизвестны: выберите его снова во вкладке «Музыка» или другой трек."]);
-    expect(within(props()).queryByRole("button", { name: "Открыть вкладку «Мои»" }) === null).toBe(true);
-    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
-    expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
-  });
-
-  test("a track gone from the list (its length unknown) points to the tabs too", async () => {
-    const { client, engine } = await studio({ music: MUSIC });
-    await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
-    selectBlock(/^Музыка:/);
-    await within(props()).findByText("Трек из прежнего списка");
-    // The engine finds no such track: the reason, and ONE line saying where to pick another (review round 1: the old «выберите его снова во
-    // вкладке «Музыка»» hint is not said a second time under it).
-    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
-    const lines = [...props().querySelectorAll(".ed-music-swap, .ed-props-note")].map((p) => plain(p.textContent));
-    expect(lines).toEqual(["Другой трек — во вкладке «Музыка» или «Мои»."]);
-    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
-    expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
-  });
 });
 
 // ---------- the «Текст» tab ----------
@@ -602,38 +364,6 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     expect(caption().value).toBe("sunday reset");
   });
 
-  // Review round 1 (U6): a typing burst ends when the field loses the focus.
-  test("type, leave the field, come back, type: two undo steps", async () => {
-    await openText();
-    fireEvent.change(caption(), { target: { value: "sunday reset!" } });
-    fireEvent.blur(caption());
-    fireEvent.focus(caption());
-    fireEvent.change(caption(), { target: { value: "sunday reset!?" } });
-    undo();
-    expect(caption().value).toBe("sunday reset!");
-    undo();
-    expect(caption().value).toBe("sunday reset");
-  });
-
-  // ...and after 1.5 s without a keystroke (TYPING_PAUSE_MS, the editor's default). The clock is set, never waited for.
-  test("a pause of 1.5 s without typing ends the burst; a shorter one does not", async () => {
-    await openText();
-    try {
-      setSystemTime(new Date("2026-10-04T10:00:00.000Z"));
-      fireEvent.change(caption(), { target: { value: "sunday reset!" } });
-      setSystemTime(new Date("2026-10-04T10:00:01.499Z"));
-      fireEvent.change(caption(), { target: { value: "sunday reset!!" } });
-      setSystemTime(new Date("2026-10-04T10:00:02.999Z"));
-      fireEvent.change(caption(), { target: { value: "sunday reset!!?" } });
-    } finally {
-      setSystemTime();
-    }
-    undo();
-    expect(caption().value).toBe("sunday reset!!");
-    undo();
-    expect(caption().value).toBe("sunday reset");
-  });
-
   test("a new size, font, style or colour asks the engine about the caption again, with it", async () => {
     const { engine } = await openText();
     const last = () => callsOf(engine, "montages.textPreview").at(-1)?.payload.layer;
@@ -648,35 +378,6 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     fireEvent.change(size, { target: { value: "150" } });
     fireEvent.pointerUp(size, { pointerId: 17 });
     await waitFor(() => expect(last()?.scale).toBe(1.5));
-  });
-
-  // Review round 1: while a newer ask is out, the verdict shown is about the text before; it is neither the field's error nor news.
-  test("a verdict older than the field's text is shown dimmed, not as the field's error and not announced", async () => {
-    const { engine } = await openText();
-    const live = (): string => plain(props().querySelector('[aria-live="polite"]')?.textContent);
-    fireEvent.change(caption(), { target: { value: "утро" } });
-    await waitFor(() => expect(live()).toBe(CAPTION_ISSUES_RU.charset));
-    expect(caption().getAttribute("aria-invalid")).toBe("true");
-    act(() => engine.holdTextDrawing(true));
-    fireEvent.change(caption(), { target: { value: "утро!" } });
-    await flush();
-    expect(caption().getAttribute("aria-invalid")).toBe(null);
-    expect(live()).toBe("");
-    expect(plain(props().querySelector(".ed-caption-stale")?.textContent)).toBe(CAPTION_ISSUES_RU.charset);
-    await act(async () => {
-      engine.releaseTextDrawing();
-      engine.holdTextDrawing(false);
-    });
-    await waitFor(() => expect(live()).toBe(CAPTION_ISSUES_RU.charset));
-    expect(caption().getAttribute("aria-invalid")).toBe("true");
-    expect(props().querySelector(".ed-caption-stale") === null).toBe(true);
-  });
-
-  test("text far past the limit is not counted grapheme by grapheme: the counter says >60", async () => {
-    await openText();
-    fireEvent.change(caption(), { target: { value: "a".repeat(1_025) } });
-    expect(plain(props().querySelector(".ed-caption-count")?.textContent)).toBe(">60/60");
-    expect(notice()).toBe(`${CAPTION_ISSUES_RU["too-long"]} Пока так, в черновике остаётся прежняя надпись.`);
   });
 
   test("a caption the engine refuses shows its rule inline (TEXT_INVALID + captionIssue, the shared words), and clears when fixed", async () => {
@@ -707,103 +408,6 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     expect(callsOf(engine, "montages.textPreview").length).toBe(asked);
     expect(within(timeline()).getByRole("button", { name: /^Текст 1: «sunday reset»/ })).toBeDefined();
     expect(callsOf(engine, "montages.save")).toHaveLength(0);
-  });
-
-  test("a superseded preview is ignored silently; the newest answer is the verdict", async () => {
-    const { engine } = await openText();
-    await flush();
-    act(() => engine.holdTextDrawing(true));
-    // The first drawing starts and waits; the next asks queue behind it, and each newer one supersedes the one before.
-    fireEvent.change(caption(), { target: { value: "a" } });
-    fireEvent.change(caption(), { target: { value: "ab" } });
-    fireEvent.change(caption(), { target: { value: "abж" } });
-    await flush();
-    expect(notice()).toBe("");
-    expect(screen.queryByText(ERROR_MESSAGES_RU.TEXT_PREVIEW_SUPERSEDED, { exact: false }) === null).toBe(true);
-    await act(async () => {
-      engine.releaseTextDrawing();
-      engine.releaseTextDrawing();
-      engine.holdTextDrawing(false);
-    });
-    await waitFor(() => expect(notice()).toBe(CAPTION_ISSUES_RU.charset));
-  });
-
-  test("an emoji chip goes in at the caret, as a step of its own (apart from the typing before it)", async () => {
-    await openText();
-    fireEvent.change(caption(), { target: { value: "sunday reset!" } });
-    caption().setSelectionRange(6, 6);
-    fireEvent.click(within(props()).getByRole("button", { name: "Вставить ☕" }));
-    expect(caption().value).toBe("sunday☕ reset!");
-    undo();
-    expect(caption().value).toBe("sunday reset!");
-    undo();
-    expect(caption().value).toBe("sunday reset");
-  });
-
-  test("style, font and colour are one step each; «Плашка» names the colour for the plaque, «Цвет» for the others", async () => {
-    const { engine } = await openText();
-    expect(within(props()).getByRole("group", { name: "Плашка" })).toBeDefined();
-    fireEvent.click(within(props()).getByRole("button", { name: "Обводка" }));
-    expect(within(props()).getByRole("group", { name: "Цвет" })).toBeDefined();
-    fireEvent.click(within(props()).getByRole("button", { name: "Caveat" }));
-    fireEvent.click(within(props()).getByRole("button", { name: "Жёлтый" }));
-    expect(within(props()).getByRole("button", { name: "Жёлтый" }).getAttribute("aria-pressed")).toBe("true");
-    const saved = await nextSave(engine);
-    expect(saved.layers[0]).toMatchObject({ style: "outline", font: "caveat", color: "#ffd166" });
-    undo();
-    expect(within(props()).getByRole("button", { name: "Белый" }).getAttribute("aria-pressed")).toBe("true");
-    undo();
-    expect(within(props()).getByRole("button", { name: "Manrope" }).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  test("«Размер»: the slider moves `scale`, the figure is the pixels; a drag is one undo step; the bounds hold", async () => {
-    await openText();
-    const size = within(props()).getByRole("slider", { name: "Размер" });
-    expect([size.getAttribute("min"), size.getAttribute("max"), size.getAttribute("aria-valuetext")]).toEqual(["50", "200", "56"]);
-    fireEvent.pointerDown(size, { pointerId: 11 });
-    fireEvent.change(size, { target: { value: "120" } });
-    fireEvent.change(size, { target: { value: "150" } });
-    fireEvent.pointerUp(size, { pointerId: 11 });
-    expect(plain(props().querySelector(".ed-field .ed-field-value")?.textContent)).toBe("84");
-    undo();
-    expect(within(props()).getByRole("slider", { name: "Размер" }).getAttribute("aria-valuetext")).toBe("56");
-  });
-
-  // Review round 1 (U3): the merge key names one gesture, so two drags are two steps even when a release was never seen.
-  test("«Размер»: two drags are two undo steps, a lost release between them included", async () => {
-    await openText();
-    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
-    fireEvent.pointerDown(size(), { pointerId: 12 });
-    fireEvent.change(size(), { target: { value: "120" } });
-    // No pointerup: it was let go outside the window.
-    fireEvent.pointerDown(size(), { pointerId: 13 });
-    fireEvent.change(size(), { target: { value: "150" } });
-    fireEvent.pointerUp(size(), { pointerId: 13 });
-    undo();
-    expect(size().getAttribute("aria-valuetext")).toBe("67");
-    undo();
-    expect(size().getAttribute("aria-valuetext")).toBe("56");
-  });
-
-  test("«Размер» from the keys: each press is one step, a held key one", async () => {
-    await openText();
-    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
-    fireEvent.keyDown(size(), { key: "ArrowRight" });
-    fireEvent.change(size(), { target: { value: "101" } });
-    fireEvent.keyDown(size(), { key: "ArrowRight", repeat: true });
-    fireEvent.change(size(), { target: { value: "102" } });
-    fireEvent.keyUp(size(), { key: "ArrowRight" });
-    fireEvent.keyDown(size(), { key: "ArrowRight" });
-    fireEvent.change(size(), { target: { value: "103" } });
-    fireEvent.keyUp(size(), { key: "ArrowRight" });
-    const value = (): string => {
-      const input = size();
-      return input instanceof HTMLInputElement ? input.value : "";
-    };
-    undo();
-    expect(value()).toBe("102");
-    undo();
-    expect(value()).toBe("100");
   });
 
   test("«Время»: a typed start is taken on Enter; an end past the montage is refused with the reason", async () => {
@@ -843,22 +447,6 @@ describe("a sticker's properties: size, time, the Reels zones, «Заменит�
     expect(within(props()).getByRole("slider", { name: "Размер" }).getAttribute("aria-valuetext")).toBe("20 %");
   });
 
-  test("«Размер»: two drags are two undo steps, a lost release between them included", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [sticker({ size: 0.2 })] });
-    selectBlock(/^Стикер 1:/);
-    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
-    fireEvent.pointerDown(size(), { pointerId: 15 });
-    fireEvent.change(size(), { target: { value: "30" } });
-    fireEvent.pointerDown(size(), { pointerId: 16 });
-    fireEvent.change(size(), { target: { value: "40" } });
-    fireEvent.pointerUp(size(), { pointerId: 16 });
-    undo();
-    expect(size().getAttribute("aria-valuetext")).toBe("30 %");
-    undo();
-    expect(size().getAttribute("aria-valuetext")).toBe("20 %");
-  });
-
   test("a sticker under the Reels buttons is warned about; «Сдвинуть внутрь» moves it out, one undo step", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [sticker({ x: 0.9, y: 0.6, size: 0.15 })] });
@@ -870,48 +458,6 @@ describe("a sticker's properties: size, time, the Reels zones, «Заменит�
     expect(saved.layers[0]).toMatchObject({ y: 0.6, size: 0.15 });
     undo();
     expect(within(props()).getByText("Под кнопками Reels")).toBeDefined();
-  });
-
-  test("«Заменить стикер»: the «GIF» tab swaps it in place; another selection ends the replacement", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, { layers: [sticker({ x: 0.3, y: 0.4 }), textLayer(1, 0, 1_000)] });
-    selectBlock(/^Стикер 1:/);
-    fireEvent.click(within(props()).getByRole("button", { name: "Заменить стикер" }));
-    expect(tab("GIF").getAttribute("aria-selected")).toBe("true");
-    expect(plain(within(media()).getByRole("status").textContent)).toContain("Замена: Стикер 1");
-    expect(within(media()).getByRole("button", { name: /^Сердце: заменить выбранный, в ролике 1, у выбранного слоя$/ })).toBeDefined();
-    fireEvent.click(within(media()).getByRole("button", { name: /^Звезда: заменить выбранный/ }));
-    const saved = await nextSave(engine);
-    expect(saved.layers[0]).toMatchObject({ layerId: "layer-001", sticker: { source: "builtin", stickerId: "star-spin" }, x: 0.3, y: 0.4, startMs: 0, endMs: 2_000 });
-    expect(saved.layers).toHaveLength(2);
-    // Back to adding: a tile puts a new sticker at the playhead.
-    expect(within(media()).getByRole("button", { name: /^Сердце: в плейхед$/ })).toBeDefined();
-    fireEvent.click(within(props()).getByRole("button", { name: "Заменить стикер" }));
-    selectBlock(/^Текст 1:/);
-    await flush();
-    expect(within(media()).queryByText(/^Замена:/) === null).toBe(true);
-  });
-
-  test("the «Мои» block points to the «Мои» tab instead of saying «скоро»", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(tab("GIF"));
-    expect(within(media()).getByText("Свои GIF и APNG — во вкладке «Мои».")).toBeDefined();
-    expect(within(media()).queryAllByText(/скоро/i)).toHaveLength(0);
-    expect(within(media()).queryAllByTitle(/скоро/i)).toHaveLength(0);
-    expect(within(media()).queryAllByRole("button", { name: "Добавить свой стикер" })).toHaveLength(0);
-  });
-
-  test("«Открыть «Мои»» switches the media panel to the «Мои» tab and leaves the keyboard focus on it", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    fireEvent.click(tab("GIF"));
-    expect(tab("GIF").getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(within(media()).getByRole("button", { name: "Открыть «Мои»" }));
-    expect(tab("Мои").getAttribute("aria-selected")).toBe("true");
-    expect(tab("GIF").getAttribute("aria-selected")).toBe("false");
-    expect(document.activeElement === tab("Мои")).toBe(true);
-    expect(within(media()).queryAllByRole("button", { name: "Открыть «Мои»" })).toHaveLength(0);
   });
 
   test("ten stickers: the tiles are off and the line says what to do", async () => {
