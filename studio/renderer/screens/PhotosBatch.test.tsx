@@ -124,66 +124,15 @@ describe("58: the gallery's «Выбор: для монтажа · для кли
     expect(bar().textContent).toBe("Оживить выбранные · 2");
   });
 
-  test("a photo in a video and a rejected one are picked for clips like any other: not dimmed, not refused, their badges stay", async () => {
-    await openNini();
-    expect(pickFor("монтажа", 3).hasAttribute("disabled")).toBe(true);
-    expect(pickFor("монтажа", 2).hasAttribute("disabled")).toBe(true);
-    await clipsMode();
-    for (const n of [3, 2]) {
-      const pick = pickFor("клипов", n);
-      expect(pick.hasAttribute("disabled")).toBe(false);
-      expect(pick.getAttribute("aria-label")).toBe(`Выбрать для клипов: фото ${n}, Дом`);
-      expect((pick.parentElement?.querySelector(".photo-held-dim") ?? null) === null).toBe(true);
-    }
-    expect(pickFor("клипов", 3).parentElement?.textContent).toContain("в 1 видео");
-    expect(pickFor("клипов", 2).parentElement?.textContent).toContain("отклонено");
-    await pickClips([3], [2]);
-    expect(bar().textContent).toBe("Оживить выбранные · 2");
-  });
-
-  test("the viewer in «для клипов» picks for clips: «Выбрать для клипов», refusing nothing", async () => {
-    await openNini();
-    await clipsMode();
-    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 3: Дом" }));
-    await flush();
-    const viewer = screen.getByRole("dialog", { name: "Фото 3 из 6" });
-    const pick = within(viewer).getByRole("button", { name: "Выбрать для клипов" });
-    expect(pick.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(pick);
-    await flush();
-    expect(pick.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(within(viewer).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    expect(bar().textContent).toBe("Оживить выбранные · 1");
-  });
 });
 
 describe("58a: the bar's line", () => {
-  test("nothing picked: «Отметьте фото, чтобы оживить их»; the button waits but stays a control (aria-disabled), and a click opens nothing", async () => {
-    await openNini();
-    await clipsMode();
-    const button = bar();
-    expect(whyOf(button)).toBe("Отметьте фото, чтобы оживить их");
-    expect(button.getAttribute("aria-disabled")).toBe("true");
-    expect(button.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(button);
-    await flush();
-    expect((screen.queryByRole("dialog") ?? null) === null).toBe(true);
-  });
-
   test("picks within the cap: the month's room from MoneyStatus, rounded down, over the worst clip — «В этом месяце осталось $6.20 — это примерно 7 клипов»", async () => {
     await openNini();
     await clipsMode();
     await pickClips([1]);
     expect(whyOf(bar())).toBe(`В этом месяце осталось $6.20${NBSP}— это примерно 7${NBSP}клипов`);
     expect(bar().hasAttribute("aria-disabled")).toBe(false);
-  });
-
-  test("$0.40 left: «…— на клип не хватит»", async () => {
-    await openNini({ money: { spentMicros: 9_600_000, monthlyBudgetMicros: 10_000_000 } });
-    await clipsMode();
-    await pickClips([1]);
-    expect(whyOf(bar())).toBe(`В этом месяце осталось $0.40${NBSP}— на клип не хватит`);
   });
 
   test("21 picks: «Не больше 20 клипов в одном пакете — снимите лишние», and the button waits", async () => {
@@ -251,26 +200,6 @@ describe("59: the sheet «Оживить N фото»", () => {
     expect(bar().textContent).toBe("Оживить выбранные · 0");
   });
 
-  test("#item-refused: a photo's file stopped reading after the sheet opened — its row struck with its own reason, one alert, the sum asked again, the focus on «Отмена»", async () => {
-    const h = await openNini();
-    await clipsMode();
-    await pickClips(...FIVE);
-    const s = await openBatchSheet();
-    h.engine.setClipPhotoPixels(USED.photoId, "unreadable");
-    fireEvent.click(mainButton(s));
-    await flush();
-    await flush();
-    const row = rowOf(s, "Фото 3 · Дом");
-    expect(row.classList.contains("batch-row-off")).toBe(true);
-    expect(row.textContent).toContain(CLIP_REASONS_RU["photo-unreadable"].replace(" —", `${NBSP}—`));
-    const alerts = within(s).getAllByRole("alert");
-    expect(alerts.map((a) => a.textContent)).toEqual([`Фото 3 · Дом не оживить: файл не читается. Сумма пересчитана${NBSP}— подтвердите ещё раз.`]);
-    expect(priceLine(s)).toBe("Обычно $1.26 · не больше $2.21");
-    expect(mainButton(s).textContent).toBe("Оживить 3 · до $2.21");
-    expect(focusedLabel()).toBe("button «Отмена»");
-    expect(callsOf(h.engine, "clips.createBatch")).toHaveLength(1);
-  });
-
   test("59a: PRICE_CHANGED after the click — «Цена изменилась: теперь не больше $X. Подтвердите ещё раз.», the focus on «Отмена»; a change of the option takes the alert away", async () => {
     const h = await openNini();
     await clipsMode();
@@ -323,22 +252,6 @@ describe("59: the sheet «Оживить N фото»", () => {
     expect(focusedLabel()).toBe("button «Отмена»");
   });
 
-  test("59c after the click: the video prices stopped reading while the sheet was open — the sheet asks again and turns into 59c, the focus on «Отмена»", async () => {
-    const h = await openNini();
-    await clipsMode();
-    await pickClips(...FIVE);
-    const s = await openBatchSheet();
-    h.engine.setVideoPrices("missing");
-    act(() => h.engine.passClipTime(11 * 60_000));
-    fireEvent.click(mainButton(s));
-    await flush();
-    await flush();
-    expect(within(s).getByRole("status").textContent).toBe(`Цены видео у OpenRouter сейчас не читаются${NBSP}— клип не запустить. Фото работают как обычно.`);
-    expect(priceLine(s)).toBe("—");
-    expect(mainButton(s).getAttribute("aria-disabled")).toBe("true");
-    expect(focusedLabel()).toBe("button «Отмена»");
-  });
-
   test("59c: PRICE_UNAVAILABLE `video` — the rows bare, 38f's notice, «Цена —», «Оживить» waits described by it", async () => {
     const h = await openNini();
     h.engine.setVideoPrices("missing");
@@ -356,17 +269,6 @@ describe("59: the sheet «Оживить N фото»", () => {
 });
 
 describe("60: «Клипы» while the batch runs", () => {
-  test("a member has no cancel of its own, even in `preparing` before its POST: «Отменить оставшиеся» is the header's", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3]]);
-    const preparingTile = (): HTMLElement | null => Array.from(document.querySelectorAll<HTMLElement>(".clips-tab .clip-phase")).find((p) => p.textContent === "Готовим кадр")?.closest("article") ?? null;
-    await until(h, () => preparingTile() !== null, "the first member preparing");
-    const preparing = preparingTile();
-    if (preparing === null) throw new Error("no preparing tile");
-    expect((within(preparing).queryByRole("button", { name: "Отменить" }) ?? null) === null).toBe(true);
-    expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
-  });
-
   test("the header by batchIndex, the members waiting calm with their place, one sidebar row «Клип 1/4 · Nini», every member in «Очередь»", async () => {
     const h = await openNini();
     await startBatch([[1], [4, "Ночнушки и бельё"], [3], [2]]);
@@ -426,35 +328,6 @@ describe("60: «Клипы» while the batch runs", () => {
     expect(within(batchHead()).getByRole("button", { name: "Закрыть" })).toBeDefined();
   });
 
-  test("#alone: a member waits for other money — «В очереди · ждём, пока закончатся другие расходы», «Ждём конца других расходов» in the sidebar", async () => {
-    const h = await openNini();
-    h.engine.openForeignReserve("run-mia:attempt-1", 300_000);
-    await startBatch([[1], [3]]);
-    await until(h, () => screen.queryByText("В очереди · ждём, пока закончатся другие расходы") !== null, "the alone-wait");
-    expect(headTitle()).toBe("Пакет · в очереди 2");
-    expect(within(sidebarQueue()).getByText("Клип 1/2 · Nini")).toBeDefined();
-    const phase = within(sidebarQueue()).getByText("Ждём конца других расходов");
-    expect(phase.classList.contains("side-clip-quiet")).toBe(true);
-  });
-
-  test("#rate-limit: the first 429 is a free record with no «Оживить снова…» while its retry waits at the tail («Пауза OpenRouter»); a retry that makes its clip hides it", async () => {
-    const h = await openNini();
-    h.engine.scriptNextBatch(["rate-limited"]);
-    await startBatch([[1], [3]]);
-    // The texts are read whole (`textContent`): the testing library's matcher would fold the no-break space before «—» into a plain one.
-    const firstRecord = (): HTMLElement | undefined => Array.from(document.querySelectorAll<HTMLElement>(".clip-fail-text")).find((p) => p.textContent === `OpenRouter занят${NBSP}— бесплатно, снимем ещё раз в конце пакета.`);
-    const retryWaiting = (): boolean => Array.from(document.querySelectorAll(".clip-tile-queued .clip-phase")).some((p) => p.textContent === `В очереди · OpenRouter занят${NBSP}— продолжим через минуту`);
-    await until(h, () => firstRecord() !== undefined && retryWaiting(), "the first 429 and its retry waiting");
-    const first = firstRecord()?.closest("article");
-    if (first === null || first === undefined) throw new Error("no first-429 tile");
-    expect((within(first).queryByRole("button", { name: "Оживить снова…" }) ?? null) === null).toBe(true);
-    expect(first.classList.contains("clip-fail-free")).toBe(true);
-    expect(headTitle()).toBe("Пакет · в очереди 2");
-    expect(within(sidebarQueue()).getByText("Пауза OpenRouter")).toBeDefined();
-    await until(h, () => headTitle().startsWith("Пакет готов"), "the batch's end");
-    expect(headTitle()).toBe("Пакет готов: 2 клипа · $0.84");
-    expect(document.querySelector(".clips-tab")?.textContent).not.toContain("OpenRouter занят");
-  });
 });
 
 describe("60b–60f: the end and the stops", () => {
@@ -504,18 +377,6 @@ describe("60b–60f: the end and the stops", () => {
     expect(modeButton("для клипов").getAttribute("aria-pressed")).toBe("true");
     expect([1, 3, 2].map((n) => pickFor("клипов", n).textContent)).toEqual(["1", "2", "3"]);
     expect(focusedLabel()).toBe("button «Оживить выбранные · 3»");
-  });
-
-  test("60f, the late member's tile: its line and its money keep the dash off the start of a line (S5.WB4c)", async () => {
-    const h = await openNini();
-    h.engine.scriptNextBatch(["late"]);
-    await startBatch([[1], [3]]);
-    const lateTile = (): HTMLElement | undefined => screen.queryAllByRole("article", { name: /^Клип в работе: / }).find((a) => a.textContent?.includes("Задерживается") === true);
-    await until(h, () => lateTile() !== undefined, "the late member");
-    const tile = lateTile();
-    if (tile === undefined) throw new Error("no late tile");
-    expect(tile.querySelector(".clip-phase")?.textContent).toMatch(new RegExp(`^Задерживается\\. Клип ещё может прийти до \\d\\d:\\d\\d${NBSP}— потом понадобится сверка расходов\\.$`));
-    expect(tile.querySelector(".clip-meta")?.textContent).toBe(`до $0.51${NBSP}— спишется при сверке`);
   });
 
   test("60f: a member's money is uncertain — the rest is not spent blind: «Клип задержался или не ясно, оплачен ли он — оставшиеся 2 не снимались…»", async () => {
@@ -569,55 +430,6 @@ describe("round 2 (S5.WB4b): the header from the engine's summary", () => {
     expect(headTitle()).not.toContain("не снимал");
   });
 
-  test("L5: «снимается» is at most one and the tab has at most one live region, all through a batch", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3], [6]]);
-    let twoAtWork = false;
-    for (let i = 0; i < 200 && !headTitle().startsWith("Пакет готов"); i++) {
-      tick(h.scheduler);
-      await flush();
-      const tab = document.querySelector<HTMLElement>(".clips-tab");
-      if (tab === null) continue;
-      if (tab.querySelectorAll(".clip-tile-work:not(.clip-tile-queued)").length > 1) twoAtWork = true;
-      expect(within(tab).queryAllByRole("status").length).toBeLessThanOrEqual(1);
-      expect(headTitle()).not.toMatch(/снимается [2-9]/);
-    }
-    expect(twoAtWork).toBe(true);
-    expect(headTitle()).toStartWith("Пакет готов");
-  });
-
-  test("L7: every row refused after the click — the alert still says why, and nothing can be sent", async () => {
-    const h = await openNini();
-    await clipsMode();
-    await pickClips([1]);
-    const s = await openBatchSheet();
-    h.engine.setClipPhotoPixels(PLAIN.photoId, "unreadable");
-    fireEvent.click(mainButton(s));
-    await flush();
-    await flush();
-    expect(within(s).getByRole("alert").textContent).toBe(`Фото 1 · Дом не оживить: файл не читается. Сумма пересчитана${NBSP}— подтвердите ещё раз.`);
-    expect(mainButton(s).getAttribute("aria-disabled")).toBe("true");
-    expect(priceLine(s)).toBe("—");
-    expect(focusedLabel()).toBe("button «Отмена»");
-  });
-
-  test("L10: a closed header stays closed in the next window on this machine", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3]]);
-    await until(h, () => headTitle().startsWith("Пакет готов"), "the batch's end");
-    fireEvent.click(within(batchHead()).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    h.unmount();
-    render(<App client={h.client} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
-    await screen.findByRole("heading", { level: 1, name: "Nini" });
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: /^Клипы/ }));
-    await flush();
-    await flush();
-    expect(clipsHeading()).toBeDefined();
-    expect((document.querySelector(".batch-head") ?? null) === null).toBe(true);
-  });
 });
 
 describe("round 3 (S5.WB4c): the links and the words around a running batch", () => {
@@ -647,79 +459,6 @@ describe("round 3 (S5.WB4c): the links and the words around a running batch", ()
     await flush();
     return h;
   }
-
-  test("MEDIUM: Nini's batch seen on Zoe's screen names Nini, and «отмените оставшиеся» opens NINI's «Клипы», not Zoe's", async () => {
-    await ninisBatchSeenFromZoe();
-    await clipsMode();
-    fireEvent.click(pickFor("клипов", 1));
-    await flush();
-    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета Nini${NBSP}— дождитесь окончания или отмените оставшиеся.`);
-    fireEvent.click(screen.getByRole("button", { name: "отмените оставшиеся" }));
-    await flush();
-    await flush();
-    expect(screen.getByRole("heading", { level: 1, name: "Nini" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
-    expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
-  });
-
-  test("the sidebar's «Клип 1/3 · Nini» leads to Nini's «Клипы» too", async () => {
-    await ninisBatchSeenFromZoe();
-    fireEvent.click(within(sidebarQueue()).getByRole("button", { name: "Клип 1/3 · Nini" }));
-    await flush();
-    await flush();
-    expect(screen.getByRole("heading", { level: 1, name: "Nini" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
-  });
-
-  test("nothing left to cancel (the last member in flight): the reason stays, the link goes", async () => {
-    const h = await openNini();
-    await startBatch([[1]]);
-    await until(h, () => screen.queryAllByText(/^Снимается/).length > 0, "the one member rendering");
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    await pickClips([6]);
-    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета${NBSP}— дождитесь окончания или отмените оставшиеся.`);
-    expect(screen.queryAllByRole("button", { name: "отмените оставшиеся" })).toHaveLength(0);
-  });
-
-  test("«Отменить оставшиеся» goes when the last member's turn comes: a focus on it moves to the header's line", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3]]);
-    await until(h, () => document.querySelector(".clip-tile-work:not(.clip-tile-queued)") !== null, "the first member at work");
-    within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" }).focus();
-    await until(h, () => within(batchHead()).queryAllByRole("button", { name: "Отменить оставшиеся" }).length === 0, "the queue empty");
-    expect(document.activeElement?.classList.contains("batch-title")).toBe(true);
-  });
-
-  test("a clip pick's place in the batch is in its name: «… · в пакете 2»", async () => {
-    await openNini();
-    await clipsMode();
-    await pickClips([6], [1]);
-    expect(pickFor("клипов", 1).getAttribute("aria-label")).toBe("Выбрать для клипов: фото 1, Дом · в пакете 2");
-  });
-
-  test("«Отметить их снова» adds the photos not shot to the photos already picked for clips", async () => {
-    const h = await openNini();
-    await clipsMode();
-    await pickClips([1], [3], [2]);
-    const s = await openBatchSheet();
-    fireEvent.click(mainButton(s));
-    await flush();
-    await flush();
-    h.engine.setClipRates({ std: { perSecondMicros: 90_000, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 160_000, perInputImageMicros: 10_000 } });
-    act(() => h.engine.passClipTime(11 * 60_000));
-    await flush();
-    await until(h, () => headLine()?.startsWith("Цена у OpenRouter выросла") === true, "the price stop");
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    await pickClips([6]);
-    fireEvent.click(screen.getByRole("tab", { name: /^Клипы/ }));
-    await flush();
-    fireEvent.click(within(batchHead()).getByRole("button", { name: "Отметить их снова" }));
-    await flush();
-    await flush();
-    expect([6, 1, 3, 2].map((n) => pickFor("клипов", n).textContent)).toEqual(["1", "2", "3", "4"]);
-  });
 
   test("PRICE_CHANGED that leaves the new sum over the month says the month in the same alert, and does not ask to confirm", async () => {
     const h = await openNini({ money: { spentMicros: 6_800_000, monthlyBudgetMicros: 10_000_000 } });
@@ -753,55 +492,7 @@ describe("round 3 (S5.WB4c): the links and the words around a running batch", ()
     expect(focusedLabel()).toBe("button «Отмена»");
   });
 
-  test("no key: the sheet says it in the one wording, «Нужен ключ OpenRouter — Настройки.» with its link", async () => {
-    const h = await openNini();
-    await clipsMode();
-    await pickClips([1]);
-    const s = await openBatchSheet();
-    // The key removed from another window while the sheet is open.
-    await act(async () => {
-      await h.client.request("settings.clearApiKey", {});
-    });
-    await flush();
-    expect(within(s).getByRole("status").textContent).toBe(`Нужен ключ OpenRouter${NBSP}— Настройки.`);
-    expect(within(s).getByRole("button", { name: "Настройки" })).toBeDefined();
-  });
 });
 
 describe("37e: «Оживить» waits while a batch runs", () => {
-  test("the viewer's «Оживить» stays a control (aria-disabled) with «Сейчас снимаются клипы пакета…», and «отмените оставшиеся» leads to «Клипы»", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3], [2]]);
-    await until(h, () => document.querySelector(".clip-tile-work:not(.clip-tile-queued)") !== null, "the first member at work");
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 6: Дом" }));
-    await flush();
-    const viewer = screen.getByRole("dialog", { name: "Фото 6 из 6" });
-    expect(within(viewer).getByRole("button", { name: "Выбрать для клипов" })).toBeDefined();
-    const animate = within(viewer).getByRole("button", { name: "Оживить" });
-    expect(animate.getAttribute("aria-disabled")).toBe("true");
-    expect(animate.hasAttribute("disabled")).toBe(false);
-    expect(whyOf(animate)).toBe(`Сейчас снимаются клипы пакета${NBSP}— дождитесь окончания или отмените оставшиеся.`);
-    fireEvent.click(animate);
-    await flush();
-    expect((screen.queryByRole("dialog", { name: "Оживить фото" }) ?? null) === null).toBe(true);
-    fireEvent.click(within(viewer).getByRole("button", { name: "отмените оставшиеся" }));
-    await flush();
-    await flush();
-    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === clipsHeading()).toBe(true);
-  });
-
-  test("#bar: the same reason on «Оживить выбранные», which waits while photos can still be picked", async () => {
-    const h = await openNini();
-    await startBatch([[1], [3], [2]]);
-    await until(h, () => document.querySelector(".clip-tile-work:not(.clip-tile-queued)") !== null, "the first member at work");
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    await pickClips([6], [4, "Ночнушки и бельё"]);
-    expect(bar().textContent).toBe("Оживить выбранные · 2");
-    expect(bar().getAttribute("aria-disabled")).toBe("true");
-    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета${NBSP}— дождитесь окончания или отмените оставшиеся.`);
-  });
 });

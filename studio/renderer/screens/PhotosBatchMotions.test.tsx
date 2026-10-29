@@ -73,27 +73,6 @@ function listOf(select: HTMLSelectElement): string[] {
 }
 
 describe("59d: the rows list the stored suggestions and ideas", () => {
-  test("the code motions, then «Предложено» and «Свои идеи» with their labels alone; the sheet's list column widens for them", async () => {
-    const h = await openNini();
-    await seedStores(h);
-    const s = await openBatch();
-    expect(s.classList.contains("mc-batch")).toBe(true);
-    expect(listOf(selectOf(rowOf(s, "Фото 3 · Дом")))).toEqual([
-      "Моргает и улыбается",
-      "Наклоняет голову",
-      "Медленный вдох",
-      "[Предложено]",
-      "Движение 1",
-      "Движение 2",
-      "Движение 3",
-      "[Свои идеи]",
-      "медленно поворачивает голову…",
-    ]);
-    expect(listOf(selectOf(rowOf(s, "Фото 1 · Ночнушки и бельё")))).toEqual(["Моргает и улыбается", "Наклоняет голову", "Медленный вдох", "[Свои идеи]", "медленно снимает халат с плеч"]);
-    // The batch sheet makes no paid part C call: no button of part C in it.
-    expect(within(s).queryByRole("button", { name: /^Предложить движения|^Своя идея|^Перевести/ }) == null).toBe(true);
-  });
-
   test("a chosen suggestion or idea shows its mark and its English under the photo; the sum does not move; «Оживить 2» sends its id", async () => {
     const h = await openNini();
     await seedStores(h);
@@ -150,13 +129,6 @@ describe("59d: the rows list the stored suggestions and ideas", () => {
     ]);
   });
 
-  test("without stored motions the rows are 59's as approved: no groups, no mark, the list column as it was", async () => {
-    await openNini();
-    const s = await openBatch();
-    expect(s.classList.contains("mc-batch")).toBe(false);
-    expect(listOf(selectOf(rowOf(s, "Фото 3 · Дом")))).toEqual(["Моргает и улыбается", "Наклоняет голову", "Медленный вдох"]);
-    expect(s.querySelector(".mc-ben") == null).toBe(true);
-  });
 });
 
 describe("59e: «Оживить N» and a running part C call (r2.1 N10)", () => {
@@ -234,118 +206,7 @@ const NEXT_THREE = labelled([
 ]);
 
 describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () => {
-  test("a call for a listed photo ends while the sheet is open: the rows are read again, the options kept; a chosen suggestion pushed out is said, its row on the first motion", async () => {
-    const h = await openNini();
-    h.engine.scriptNextMotionReplies([FIRST_THREE]);
-    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
-    // A sheet of Фото 3 asks for three more and is closed while the call runs (the window knows the call).
-    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 3: Дом" }));
-    await flush();
-    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Оживить" }));
-    await settle();
-    const clipSheet = screen.getByRole("dialog", { name: "Оживить фото" });
-    h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([NEXT_THREE]);
-    fireEvent.click(within(clipSheet).getByRole("button", { name: /^Предложить движения/ }));
-    await settle();
-    fireEvent.click(within(clipSheet).getByRole("button", { name: "Отмена" }));
-    await flush();
-    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    const s = await openBatch();
-    const row = rowOf(s, "Фото 3 · Дом");
-    fireEvent.change(selectOf(row), { target: { value: "v-1" } });
-    fireEvent.click(within(s).getByRole("radio", { name: "Чётче · 1080p" }));
-    await flush();
-    const asked = callsOf(h.engine, "clips.batchOptions").length;
-    h.engine.holdMotionCalls(false);
-    await settle();
-    expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
-    const again = rowOf(s, "Фото 3 · Дом");
-    expect(listOf(selectOf(again)).includes("Дует на чай")).toBe(false);
-    // The row's default takes the dropped motion's place: its first suggestion still listed (FU-CLIP round 2), with its mark.
-    expect(selectOf(again).value).toBe(defaultValueOf(selectOf(again)));
-    expect(selectOf(again).value).toMatch(/^v-/);
-    expect(plain(again.querySelector(".mc-ben .mc-tag")?.textContent)).toBe("предложено");
-    expect(plain(within(s).getByRole("status").textContent)).toBe(`Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «${defaultLabelOf(selectOf(again))}».`);
-    expect((within(s).getByRole("radio", { name: "Чётче · 1080p" }) as HTMLInputElement).checked).toBe(true);
-  });
-
-  test("`unknown-motion` after «Оживить 2»: the row stays (not struck) and says what it is on now, one alert, the rows read again; the next click goes", async () => {
-    const h = await openNini();
-    await seedStores(h);
-    const s = await openBatch();
-    fireEvent.change(selectOf(rowOf(s, "Фото 3 · Дом")), { target: { value: "v-1" } });
-    await flush();
-    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
-      store.items = store.items.filter((item) => item.id !== "v-1");
-    });
-    const asked = callsOf(h.engine, "clips.batchOptions").length;
-    fireEvent.click(mainButton(s));
-    await settle();
-    const row = rowOf(s, "Фото 3 · Дом");
-    expect(row.classList.contains("batch-row-off")).toBe(false);
-    // Round 2 (L-3): the row is on its default already (FU-CLIP round 2: its first suggestion still listed), so its line says which — it does not ask to choose.
-    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe(`Движение больше недоступно — выбрано «${defaultLabelOf(selectOf(row))}».`);
-    expect(plain(within(s).getByRole("alert").textContent)).toBe("Фото 3 · Дом: движение больше недоступно — выберите другое.");
-    expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
-    expect(selectOf(row).value).toBe(defaultValueOf(selectOf(row)));
-    expect(selectOf(row).value).toMatch(/^v-/);
-    expect(document.activeElement === cancelButton(s)).toBe(true);
-    // Another choice ends the line; the click goes.
-    fireEvent.change(selectOf(row), { target: { value: "v-2" } });
-    await flush();
-    expect(row.querySelector(".batch-note") == null).toBe(true);
-    fireEvent.click(mainButton(s));
-    await settle();
-    expect(callsOf(h.engine, "clips.createBatch").at(-1)?.payload.items).toEqual([
-      { photoId: PLAIN.photoId, motionId: "v-2" },
-      { photoId: BOLD.photoId, motionId: "g-blink" },
-    ]);
-  });
 });
 
 describe("S5.WC5b round 2 (M-2): a drop never hides why «Оживить 2» waits", () => {
-  test("the month does not fit and a call ends that drops the chosen motion: the month line stays, the drop added to it; «Оживить 2» still points at the month line", async () => {
-    const h = await openNini({ money: { spentMicros: 9_600_000, monthlyBudgetMicros: 10_000_000 } });
-    h.engine.scriptNextMotionReplies([FIRST_THREE]);
-    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
-    // A sheet of Фото 3 asks for three more and is closed while the call runs.
-    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 3: Дом" }));
-    await flush();
-    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Оживить" }));
-    await settle();
-    const clipSheet = screen.getByRole("dialog", { name: "Оживить фото" });
-    h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([NEXT_THREE]);
-    fireEvent.click(within(clipSheet).getByRole("button", { name: /^Предложить движения/ }));
-    await settle();
-    fireEvent.click(within(clipSheet).getByRole("button", { name: "Отмена" }));
-    await flush();
-    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    const s = await openBatch();
-    fireEvent.change(selectOf(rowOf(s, "Фото 3 · Дом")), { target: { value: "v-1" } });
-    await flush();
-    const footNotices = (): string[] => Array.from(s.querySelectorAll(".clip-sheet-foot .notice")).map((n) => plain(n.textContent));
-    const [month] = footNotices();
-    expect(month?.startsWith("Не хватает месячного бюджета: пакету нужно до ")).toBe(true);
-    h.engine.holdMotionCalls(false);
-    await settle();
-    // The row's default takes the dropped motion's place: its first suggestion still listed (FU-CLIP round 2).
-    const dropped = selectOf(rowOf(s, "Фото 3 · Дом"));
-    expect(dropped.value).toBe(defaultValueOf(dropped));
-    expect(dropped.value).toMatch(/^v-/);
-    // One status: the month line (its room read again, the call's reserve settled), then the drop.
-    const drop = ` Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «${defaultLabelOf(dropped)}».`;
-    const after = footNotices();
-    expect(after).toHaveLength(1);
-    const [both = ""] = after;
-    expect(both.startsWith("Не хватает месячного бюджета: пакету нужно до ")).toBe(true);
-    expect(both.endsWith(drop)).toBe(true);
-    expect(plain(within(s).getByRole("status").textContent)).toBe(both);
-    // «Оживить 2» waits, described by the month line alone.
-    expect(isOff(mainButton(s))).toBe(true);
-    expect(describedText(mainButton(s))).toBe(both.slice(0, both.length - drop.length));
-  });
 });

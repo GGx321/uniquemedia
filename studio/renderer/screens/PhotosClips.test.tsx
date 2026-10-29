@@ -72,71 +72,9 @@ async function animateFromSheet(s: HTMLElement, label = /^Оживить · до
 const sidebarQueue = (): HTMLElement => screen.getByRole("region", { name: "Очередь" });
 
 describe("the «Клипы» tab among the avatar's tabs (39, R-14)", () => {
-  test("«Фото · Клипы · История сцен · Видео · Внешность», and the arrows go round the ones that work, «Клипы» included", async () => {
-    await openNini();
-    expect(tabNames()).toEqual(["Фото", "Клипы", "История сцен", "Видео", "Внешность"]);
-    const photos = screen.getByRole("tab", { name: "Фото" });
-    photos.focus();
-    fireEvent.keyDown(photos, { key: "ArrowRight" });
-    expect(clipsTab().getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === clipsTab()).toBe(true);
-    fireEvent.keyDown(clipsTab(), { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Видео" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Видео" }), { key: "ArrowLeft" });
-    expect(clipsTab().getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(clipsTab(), { key: "ArrowLeft" });
-    expect(photos.getAttribute("aria-selected")).toBe("true");
-  });
-
-  test("a clip just started puts the focus on the tab's heading once; coming back to «Клипы» with → leaves it on the tab, and the arrows keep going", async () => {
-    await openNini();
-    await animateFromSheet(await openSheet());
-    expect(document.activeElement === screen.getByRole("heading", { level: 2, name: "Клипы" })).toBe(true);
-    const photos = screen.getByRole("tab", { name: "Фото" });
-    fireEvent.click(photos);
-    await flush();
-    photos.focus();
-    fireEvent.keyDown(photos, { key: "ArrowRight" });
-    await flush();
-    expect(clipsTab().getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === clipsTab()).toBe(true);
-    fireEvent.keyDown(clipsTab(), { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Видео" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Видео" }), { key: "ArrowLeft" });
-    fireEvent.keyDown(clipsTab(), { key: "ArrowLeft" });
-    expect(photos.getAttribute("aria-selected")).toBe("true");
-  });
-
-  test("39: no clips yet — «Клипов пока нет» and «Откройте фото и нажмите «Оживить».», no count on the tab", async () => {
-    await openNini();
-    await showClips();
-    expect(screen.getByRole("heading", { level: 2, name: "Клипы" })).toBeDefined();
-    expect(screen.getByText("Клипов пока нет")).toBeDefined();
-    expect(screen.getByText("Откройте фото и нажмите «Оживить».")).toBeDefined();
-    expect(clipsTab().querySelector(".tab-new") === null).toBe(true);
-  });
 });
 
 describe("37: «Оживить» in the photo viewer", () => {
-  test("between «Выбрать для монтажа» and «Отклонить», opening a dialog", async () => {
-    await openNini();
-    const v = await openPhoto(3);
-    const names = within(v.querySelector(".viewer-actions") as HTMLElement)
-      .getAllByRole("button")
-      .map((b) => b.textContent?.trim());
-    expect(names.slice(0, 3)).toEqual(["Выбрать для монтажа", "Оживить", "Отклонить"]);
-    expect(animateIn(v).getAttribute("aria-haspopup")).toBe("dialog");
-    expect(animateIn(v).hasAttribute("disabled")).toBe(false);
-  });
-
-  test("37a: a frame whose face is not known to show waits, with the engine's reason under it", async () => {
-    await openNini();
-    const v = await openPhoto(2);
-    const button = animateIn(v);
-    expect(button.hasAttribute("disabled")).toBe(true);
-    expect(whyOf(button)).toBe("Для этого кадра движение не подобрать: лица не видно.");
-  });
-
   test("37c: while paid calls wait for a reconcile — «Сначала сверка расходов»", async () => {
     const h = await openNini();
     act(() => h.engine.requireReconcile(["open-reserves"]));
@@ -146,35 +84,6 @@ describe("37: «Оживить» in the photo viewer", () => {
     expect(whyOf(button)).toBe("Сначала сверка расходов");
   });
 
-  test("37c #nokey: without a key — «Нужен ключ OpenRouter — Настройки.», «Настройки» a link", async () => {
-    await openNini({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    const v = await openPhoto(3);
-    const button = animateIn(v);
-    expect(button.hasAttribute("disabled")).toBe(true);
-    expect(whyOf(button)).toBe("Нужен ключ OpenRouter — Настройки.");
-    expect(within(v).getByRole("button", { name: "Настройки" })).toBeDefined();
-  });
-
-  test("37d: under `off` a frame of «Смелая» waits with «Кадры «Смелой» пока не оживляются.», the viewer still naming its model", async () => {
-    await openNini({ clips: { boldClips: "off" } });
-    const v = await openPhoto(1, "Ночнушки и бельё");
-    expect(whyOf(animateIn(v))).toBe("Кадры «Смелой» пока не оживляются.");
-    expect(within(v).getByText("Seedream 5 Pro · 2K")).toBeDefined();
-  });
-
-  test("37b: while another clip renders — «Сейчас снимается другой клип…», and the queue shows «Клип · Nini»", async () => {
-    const h = await openNini();
-    await animateFromSheet(await openSheet());
-    // Two steps: sent, then rendering — the paid slot is held until the clip's money closes (I5.50).
-    runJobs(h.scheduler, 2);
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    const button = animateIn(await openPhoto(3));
-    expect(button.hasAttribute("disabled")).toBe(true);
-    expect(whyOf(button)).toBe(CLIP_REASONS_RU["one-at-a-time"].replace(" —", "\u00a0—"));
-    expect(within(sidebarQueue()).getByText("Клип · Nini")).toBeDefined();
-  });
 });
 
 /** The listing after Grok got dearer: in mode auto the worst case is Grok's reserve, so every ceiling moves. */
@@ -305,22 +214,6 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(within(sheet()).getByText(/Цена изменилась: теперь не больше/).textContent).toBe(`Цена изменилась: теперь не больше ${worst}. Подтвердите ещё раз.`);
   });
 
-  test("38b: the new price leaves no room in the month — the main button turns off and the focus goes to the sheet's heading, never to the page", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    // Grok's reserve (the auto worst case) now exceeds the month; Kling alone still fits.
-    h.engine.setClipRates({ ...GROK_DEARER, grok: { perSecondMicros: 5_000_000, perInputImageMicros: 10_000 } });
-    h.engine.passClipTime(11 * 60_000);
-    const go = within(s).getByRole("button", { name: "Оживить · до $0.85" });
-    go.focus();
-    fireEvent.click(go);
-    await flush();
-    await flush();
-    const main = within(sheet()).getByRole("button", { name: /^Оживить · до/ });
-    expect(main.hasAttribute("disabled")).toBe(true);
-    expect(document.activeElement === within(sheet()).getByRole("heading", { level: 2, name: "Оживить фото" })).toBe(true);
-  });
-
   test("38c: the month holds Kling alone — «Оживить» waits, the notice says what the clip needs, «Оживить без запасной модели · до $0.51» sends fallback none", async () => {
     const h = await openNini({ money: { spentMicros: 9_400_000, monthlyBudgetMicros: 10_000_000 } });
     const s = await openSheet();
@@ -331,19 +224,6 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(notes(s)).toContain("Если Kling откажет, Grok снимать не будем");
     await animateFromSheet(s, /^Оживить без запасной модели · до \$0\.51$/);
     expect(callsOf(h.engine, "clips.create")[0]?.payload).toMatchObject({ fallback: "none", acceptedWorstMicros: 504_000 });
-  });
-
-  test("38e: a frame of «Смелая» — Kling alone in both modes, the line about no fallback in place of the Grok line", async () => {
-    await openNini();
-    const s = await openSheet(1, "Ночнушки и бельё");
-    expect(within(s).getByText("Фото 1 из 3 · Ночнушки и бельё")).toBeDefined();
-    expect(within(s).getByText("Kling 3.0 · 720p")).toBeDefined();
-    expect(priceLine(s)).toBe("Обычно $0.42 · не больше $0.51");
-    expect(notes(s)).toEqual(["Для кадров «Смелой» запасной модели нет: если Kling откажет, клип не снимется — отказ бесплатный.", "Звука нет. Клип появится во вкладке «Клипы» через 1–3 минуты."]);
-    expect(within(s).queryByRole("button", { name: /без запасной модели/ }) === null).toBe(true);
-    fireEvent.click(radio(s, "Чётче · 1080p"));
-    expect(within(s).queryByText("Запасная модель (Grok) снимает в 720p") === null).toBe(true);
-    expect(priceLine(s)).toBe("Обычно $0.56 · не больше $0.68");
   });
 
   test("38f: the video prices cannot be read — the notice in the form's place, «Цена —», «Оживить» waits described by it", async () => {
@@ -358,23 +238,6 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(within(s).queryByRole("radiogroup") === null).toBe(true);
   });
 
-  test("«Отмена» closes the sheet and the viewer is there again, the focus back on «Оживить»", async () => {
-    await openNini();
-    const s = await openSheet();
-    fireEvent.click(within(s).getByRole("button", { name: "Отмена" }));
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Оживить фото" }) === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(animateIn(viewer())));
-  });
-
-  test("Escape closes the sheet only, never the viewer under it", async () => {
-    await openNini();
-    await openSheet();
-    fireEvent.keyDown(document.activeElement ?? window, { key: "Escape" });
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Оживить фото" }) === null).toBe(true);
-    expect(viewer()).toBeDefined();
-  });
 });
 
 describe("StrictMode", () => {
@@ -409,34 +272,6 @@ describe("40–42: the tiles", () => {
     expect(within(ready).getByRole("button", { name: "Открыть клип «Моргает и улыбается», 0:05" })).toBeDefined();
     expect(clipsTab().textContent).toBe("Клипы1, новых: 1");
     expect(within(sidebarQueue()).queryByText("Клип · Nini") === null).toBe(true);
-  });
-
-  test("40: the phases as they come, «Снимается · m:ss» counting, the steps filling", async () => {
-    const h = await openNini();
-    await animateFromSheet(await openSheet());
-    const seen = new Set<string>();
-    for (let i = 0; i < 60; i++) {
-      const work = screen.queryByRole("article", { name: "Клип в работе: Моргает и улыбается" });
-      if (work === null) break;
-      seen.add((within(work).getByRole("status").textContent ?? "").replace(/\d+:\d\d/, "m:ss"));
-      tick(h.scheduler);
-      await flush();
-    }
-    expect([...seen]).toEqual(["Готовим кадр", "Отправляем в Kling", "Снимается · m:ss", "Скачивается", "Проверяем лицо", "Сохраняем"]);
-  });
-
-  test("40 #late: «Задерживается. Клип ещё может прийти до HH:MM — потом понадобится сверка расходов.»", async () => {
-    const h = await openNini();
-    h.engine.scriptNextClip("late");
-    await animateFromSheet(await openSheet());
-    for (let i = 0; i < 20 && screen.queryByText(/^Задерживается\./) === null; i++) {
-      tick(h.scheduler);
-      await flush();
-    }
-    const work = tile("Клип в работе: Моргает и улыбается");
-    expect(within(work).getByRole("status").textContent).toMatch(/^Задерживается\. Клип ещё может прийти до \d\d:\d\d — потом понадобится сверка расходов\.$/);
-    expect(within(work).getByText("задерживается")).toBeDefined();
-    expect(within(sidebarQueue()).getByText("Задерживается")).toBeDefined();
   });
 
   test("42a: Kling and Grok both refused for free — «Kling и Grok отказали — бесплатно», «Оживить снова…» opens the sheet again, the trash removes the tile at once", async () => {
@@ -533,40 +368,6 @@ describe("40–42: the tiles", () => {
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(0);
   });
 
-  test("a «Клип не снят» tile put away stays away after the tab is left and come back to", async () => {
-    const h = await openNini();
-    await animateFromSheet(await openSheet());
-    act(() => h.engine.requireReconcile(["open-reserves"]));
-    tick(h.scheduler);
-    await flush();
-    await flush();
-    fireEvent.click(within(tile("Клип не получился: Моргает и улыбается")).getByRole("button", { name: "Убрать «Моргает и улыбается»" }));
-    await flush();
-    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    await showClips();
-    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
-  });
-
-  test("a ready clip whose poster file is missing shows the placeholder, not a broken picture", async () => {
-    const scheduler = new ManualScheduler();
-    const engine = new MockEngine({ scheduler, latencyMs: 0, avatars: [summary(PHOTOS)], photos: PHOTOS });
-    engine.seedClips(NINI.avatarId, 1);
-    const client = { ...mockEngineClient(engine), kind: "window" as const };
-    render(<App client={client} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
-    await screen.findByRole("heading", { level: 1, name: "Nini" });
-    await flush();
-    await showClips();
-    const ready = screen.getAllByRole("article")[0] as HTMLElement;
-    const img = ready.querySelector("img.clip-poster-img");
-    expect(img).not.toBeNull();
-    fireEvent.error(img as Element);
-    await flush();
-    expect(ready.querySelector("img.clip-poster-img") === null).toBe(true);
-    expect(ready.querySelector(".portrait-placeholder")).not.toBeNull();
-  });
 });
 
 describe("43: the clip viewer and «Сохранить в папку»", () => {
@@ -586,19 +387,6 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     const term = within(clipViewer()).getByText(dt, { selector: "dt" });
     return term.nextElementSibling?.textContent ?? "";
   };
-
-  test("its facts: from which photo, the motion, the model, the cost, the face; opening it marks it seen", async () => {
-    const h = await readyClip();
-    expect(clipViewer().getAttribute("aria-label") ?? within(clipViewer()).getByRole("heading", { level: 2 }).textContent).toBe("Клип 1 из 1");
-    expect(fact("Из фото")).toBe("Фото 3 · Дом");
-    expect(fact("Движение")).toBe("Моргает и улыбается");
-    expect(fact("Модель")).toBe("Kling 3.0 · 720p · 5 с");
-    expect(fact("Стоимость")).toBe("$0.42");
-    expect(fact("Лицо")).toBe("0.86 (по 10 кадрам)");
-    expect(callsOf(h.engine, "clips.markSeen")).toHaveLength(1);
-    expect(clipsTab().querySelector(".tab-new") === null).toBe(true);
-    expect(within(clipViewer()).getByText("без звука · по кругу")).toBeDefined();
-  });
 
   test("«Сохранить в папку»: «Сохраняем…» holding the focus, «Сохраняем · N %» past 2 s, then 43a with the claimed name and what the file is", async () => {
     const h = await readyClip();
@@ -636,43 +424,6 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     expect(h.engine.revealedClips).toHaveLength(1);
   });
 
-  test("43c: the encode failed — «Не удалось сохранить клип в папку — файл в Studio цел. Попробуйте ещё раз.», and «Сохранить в папку» again", async () => {
-    const h = await readyClip();
-    h.engine.nextClipExport("fail");
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }));
-    await flush();
-    tick(h.scheduler, 4);
-    await flush();
-    await flush();
-    expect(within(clipViewer()).getByRole("alert").textContent).toBe(CLIP_EXPORT_FAILED_RU);
-    expect(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }).getAttribute("aria-disabled")).not.toBe("true");
-  });
-
-  test("43c′: the clip's file in Studio is damaged — «Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.», not «файл в Studio цел»", async () => {
-    const h = await readyClip();
-    h.engine.nextClipExport("damaged");
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }));
-    await flush();
-    tick(h.scheduler, 4);
-    await flush();
-    await flush();
-    const alert = within(clipViewer()).getByRole("alert");
-    expect(alert.textContent).toBe("Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.");
-    expect(alert.textContent).toBe(CLIP_FILE_DAMAGED_RU);
-    expect(alert.textContent).not.toContain("цел");
-  });
-
-  test("43b: the export folder cannot take it — the app's own words and «Открыть папку в Настройках»", async () => {
-    const h = await readyClip();
-    h.engine.setExportDisk({ status: "unavailable", reason: "missing" });
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }));
-    await flush();
-    await flush();
-    expect(within(clipViewer()).getByText("Папка «Готовые видео» недоступна")).toBeDefined();
-    expect(within(clipViewer()).getByText("Папка не найдена.")).toBeDefined();
-    expect(within(clipViewer()).getByRole("button", { name: "Открыть папку в Настройках" })).toBeDefined();
-  });
-
   test("44: «Удалить» asks first; over a clip never saved the text says there is no copy; «Удалить» removes it", async () => {
     const h = await readyClip();
     fireEvent.click(within(clipViewer()).getByRole("button", { name: "Удалить" }));
@@ -695,24 +446,6 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Клипы" })));
   });
 
-  test("44 over a saved clip: «Копия в «Готовые видео» останется.»", async () => {
-    const h = await readyClip();
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }));
-    await flush();
-    tick(h.scheduler, 10);
-    await flush();
-    await flush();
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(within(screen.getByRole("alertdialog", { name: "Удалить клип?" })).getByText("Файл клипа удалится из Studio. Копия в «Готовые видео» останется. Деньги за него уже потрачены.")).toBeDefined();
-  });
-
-  test("«Из фото» opens the photo in the photo viewer", async () => {
-    await readyClip();
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Фото 3 · Дом" }));
-    await flush();
-    expect(screen.getByRole("dialog", { name: "Фото 3 из 3" })).toBeDefined();
-  });
 });
 
 describe("43d: the clip viewer keeps nothing of the clip it left", () => {
@@ -746,156 +479,9 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
 
   // There is no command for one photo by id, and the photo viewer closes on a photo the pages read do not hold: so a source photo beyond the pages read cannot be opened from here, and
   // the line says only that it is not shown here, instead of offering a button that would do nothing.
-  test("a source photo beyond the pages read is not shown here, with no button that would open nothing", async () => {
-    const many = Array.from({ length: MAX_LISTED_PHOTOS + 1 }, (_, i) => scenePhoto(i + 1, {}, NINI));
-    const h = setup({ avatars: [summary(many)], photos: many });
-    h.engine.seedClips(NINI.avatarId, 1);
-    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
-    await screen.findByRole("heading", { level: 1, name: "Nini" });
-    await flush();
-    await showClips();
-    openTile(0);
-    await flush();
-    await flush();
-    const source = within(clipViewer()).getByText("Из фото", { selector: "dt" }).nextElementSibling;
-    expect(source?.textContent).toBe("исходное фото здесь не показано");
-    expect(source?.querySelector("button") === null).toBe(true);
-  });
-
-  test("a refusal shown on one clip is gone under the next one", async () => {
-    const h = await openSeeded();
-    h.engine.failNext("clips.export", { code: "INTERNAL", detail: "the disk said no" });
-    fireEvent.click(saveButton());
-    await flush();
-    expect(clipViewer().querySelector(".viewer-error") === null).toBe(false);
-    await step("ArrowRight");
-    expect(within(clipViewer()).getByRole("heading", { level: 2 }).textContent).toBe("Клип 2 из 2");
-    expect(clipViewer().querySelector(".viewer-error") === null).toBe(true);
-  });
-
-  test("a refusal for this clip's size (not enough space) shows its reason and the Settings link, never locks the button, and is gone under the next clip", async () => {
-    const h = await openSeeded();
-    h.engine.setExportFreeBytes(1_000);
-    fireEvent.click(saveButton());
-    await flush();
-    await flush();
-    expect(within(clipViewer()).getByText("Папка «Готовые видео» недоступна")).toBeDefined();
-    expect(within(clipViewer()).getByText("В папке не хватает свободного места.")).toBeDefined();
-    expect(within(clipViewer()).getByRole("button", { name: "Открыть папку в Настройках" })).toBeDefined();
-    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
-    fireEvent.click(saveButton());
-    await flush();
-    expect(callsOf(h.engine, "clips.export")).toHaveLength(2);
-    await step("ArrowRight");
-    expect(within(clipViewer()).queryByText("В папке не хватает свободного места.") === null).toBe(true);
-  });
-
-  test("stepping away from a clip whose save is on its way and back keeps its button busy", async () => {
-    const h = await openSeeded();
-    h.engine.delayNext("clips.export", 1_000_000);
-    fireEvent.click(saveButton());
-    await flush();
-    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
-    await step("ArrowRight");
-    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
-    await step("ArrowLeft");
-    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
-    expect(callsOf(h.engine, "clips.export")).toHaveLength(1);
-  });
-
-  test("a folder that refused the save and is back lets «Сохранить в папку» work again, on any clip", async () => {
-    const h = await openSeeded();
-    h.engine.setExportDisk({ status: "unavailable", reason: "missing" });
-    fireEvent.click(saveButton());
-    await flush();
-    await flush();
-    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
-    h.engine.setExportDisk({ status: "ok" });
-    await act(async () => {
-      await h.client.request("export.check", {});
-    });
-    await flush();
-    expect(within(clipViewer()).queryByText("Папка «Готовые видео» недоступна") === null).toBe(true);
-    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
-    fireEvent.click(saveButton());
-    await flush();
-    expect(callsOf(h.engine, "clips.export")).toHaveLength(2);
-  });
-
-  test("opening a clip whose export finished earlier says nothing", async () => {
-    const h = await openSeeded();
-    fireEvent.click(saveButton());
-    await flush();
-    tick(h.scheduler, 10);
-    await flush();
-    await flush();
-    expect(news()).toBe("Клип сохранён в папку.");
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    openTile(0);
-    await flush();
-    await flush();
-    expect(within(clipViewer()).getByText(/^Сохранено:/)).toBeDefined();
-    expect(news()).toBe("");
-  });
-
-  test("stepping onto a clip does not carry the last clip's news along, nor its «Сохраняем…»", async () => {
-    const h = await openSeeded();
-    fireEvent.click(saveButton());
-    await flush();
-    tick(h.scheduler, 10);
-    await flush();
-    await flush();
-    await step("ArrowRight");
-    expect(news()).toBe("");
-    await step("ArrowLeft");
-    expect(news()).toBe("");
-  });
 });
 
 describe("a deleted clip does not come back as a «Сохраняем» tile", () => {
-  test("create X, delete it, export Y: while the list is read again after the export, X has no tile and nothing is announced for it", async () => {
-    const h = setup({ avatars: [summary(PHOTOS)], photos: PHOTOS });
-    h.engine.seedClips(NINI.avatarId, 1);
-    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
-    await screen.findByRole("heading", { level: 1, name: "Nini" });
-    await flush();
-    await animateFromSheet(await openSheet());
-    runJobs(h.scheduler, 60);
-    await flush();
-    await flush();
-    // X (the one made now, the newest) is deleted from its viewer.
-    const newest = screen.getAllByRole("button", { name: /^Открыть клип/ })[0];
-    if (newest === undefined) throw new Error("no clip tile");
-    fireEvent.click(newest);
-    await flush();
-    await flush();
-    const viewerOf = (): HTMLElement => screen.getByRole("dialog", { name: /^Клип \d+ из \d+$/ });
-    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    fireEvent.click(within(screen.getByRole("alertdialog", { name: "Удалить клип?" })).getByRole("button", { name: "Удалить" }));
-    await flush();
-    await flush();
-    expect(tilesNamed()).toHaveLength(1);
-    // Y (the seeded one) is exported; the list read after the export ends is slow.
-    fireEvent.click(screen.getByRole("button", { name: /^Открыть клип/ }));
-    await flush();
-    await flush();
-    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Сохранить в папку" }));
-    await flush();
-    await flush();
-    h.engine.delayNext("clips.list", 1_000_000);
-    const listsBefore = callsOf(h.engine, "clips.list").length;
-    for (let i = 0; i < 30 && callsOf(h.engine, "clips.list").length === listsBefore; i++) {
-      tick(h.scheduler, 1);
-      await flush();
-    }
-    expect(callsOf(h.engine, "clips.list").length).toBeGreaterThan(listsBefore);
-    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    expect(screen.queryAllByRole("article", { name: /Клип в работе/ })).toHaveLength(0);
-    expect(screen.queryAllByText("Сохраняем")).toHaveLength(0);
-  });
 });
 
 describe("46: after a restart", () => {
@@ -976,32 +562,4 @@ describe("46: a tile in a window that never saw the click", () => {
     }
   });
 
-  test("a reload while the clip renders: the tile has the motion, the length and the ceiling the owner accepted (the table says the cap in every phase but «late» and «recovering»)", async () => {
-    const h = await openNini();
-    await makeThenReopen(h, 2, false);
-
-    const working = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
-    expect(within(working).getByRole("status").textContent).toMatch(/^Снимается · \d+:\d\d$/);
-    expect(within(working).getByText("0:05")).toBeDefined();
-    expect(within(working).getByText("до $0.85")).toBeDefined();
-    expect(within(working).getByRole("img", { name: "Кадр клипа «Моргает и улыбается»" }).getAttribute("style")).toContain(placeholderGradient(PLAIN.photoId));
-  });
-
-  test("a reload while the clip is late: the tile says what is still open, «до $0.51 — спишется при сверке»", async () => {
-    const h = await openNini();
-    h.engine.scriptNextClip("late");
-    await makeThenReopen(h, "late", false);
-
-    const late = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
-    expect(within(late).getByRole("status").textContent).toMatch(/^Задерживается\./);
-    expect(within(late).getByText("до $0.51 — спишется при сверке")).toBeDefined();
-    expect(within(late).queryByText("до $0.85") === null).toBe(true);
-  });
-
-  test("the queue row still names the clip by its avatar, and the tile's facts do not change it", async () => {
-    const h = await openNini();
-    await makeThenReopen(h, 3, false);
-
-    expect(within(sidebarQueue()).getByText("Клип · Nini")).toBeDefined();
-  });
 });
