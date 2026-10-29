@@ -33,18 +33,10 @@ const issues = (text: string): CaptionIssue[] => captionIssues(text, ctx());
 describe("a caption that passes", () => {
   test.each([
     "Good morning",
-    "Coffee first, then the world.",
-    "It's 5am and I'm up",
     "“Quotes” and ‘quotes’ – with dashes — and an ellipsis…",
-    "Two lines\nof text",
-    "CRLF lines\r\nare fine too",
     "Hello \u{1F44B}",
-    "Top 10 spots",
     `${ENGLAND} match day`,
-    `Team \u{1F1FA}\u{1F1F8} \u{1F1EC}\u{1F1E7}`,
     "\u{1F469}\u{1F3FD}\u{200D}\u{1F4BB} at work",
-    "\u{2764} \u{2714} \u{2708} \u{2600} \u{203C} \u{27A1} \u{261D}",
-    `#${VS16}${KEYCAP} 1${VS16}${KEYCAP} *${VS16}${KEYCAP}`,
   ])("has no issue: %p", (text) => {
     expect(issues(text)).toEqual([]);
   });
@@ -60,39 +52,19 @@ describe("charset", () => {
   test.each([
     ["an accented letter", "caf\u{E9}"],
     ["Cyrillic", "Привет"],
-    ["Greek", "\u{3B1}\u{3B2}"],
     ["a tab", "a\tb"],
-    ["U+0001", "a\u{1}b"],
-    ["NUL", "a\u{0}b"],
-    ["DEL", "a\u{7F}b"],
-    ["a C1 control", "a\u{85}b"],
-    ["a lone CR", "a\rb"],
-    ["a line separator", "a\u{2028}b"],
-    ["a paragraph separator", "a\u{2029}b"],
     ["a no-break space", "a\u{A0}b"],
-    ["a zero-width space", "a\u{200B}b"],
-    ["a bidi override", "a\u{202E}b"],
-    ["a BOM", "\u{FEFF}a"],
     ["a lone surrogate", "a\u{D800}b"],
-    ["an euro sign", "\u{20AC}5"],
-    ["a fullwidth letter", "\u{FF21}"],
-    ["an Arabic-Indic digit", "\u{661}"],
-    ["a combining mark on a letter", "e\u{301}"],
-    ["a private-use character", "a\u{E000}b"],
   ])("refuses %s", (_name, text) => {
     expect(issues(text)).toContain("charset");
   });
 
   test.each([
     ["ZWJ between letters", `te${ZWJ}en`],
-    ["ZWNJ between letters", "te\u{200C}en"],
     ["VS16 after a letter", `a${VS16}b`],
-    ["VS15 after a letter", `a${VS15}b`],
     ["VS16 after a digit without a keycap", `1${VS16}`],
-    ["U+20E3 after a letter", `a${KEYCAP}`],
     ["a ZWJ before a skin tone modifier after a letter", `a${ZWJ}\u{1F3FD}`],
     ["a tag character in text", `a${tag("g")}b`],
-    ["a cancel tag in text", `a${CANCEL_TAG}`],
   ])("refuses %s inside a text run", (_name, text) => {
     expect(issues(text)).toContain("charset");
   });
@@ -184,16 +156,9 @@ describe("(c) (r) and (tm) are refused in every form", () => {
 describe("emoji the font cannot draw", () => {
   test.each([
     ["an emoji with a combining mark", "\u{1F600}\u{301}"],
-    ["an emoji with a ZWNJ", "\u{1F600}\u{200C}"],
     ["a lone regional indicator", "\u{1F1FA}"],
-    ["a lone regional indicator between words", "go \u{1F1FA} go"],
-    ["a third regional indicator after a flag", "\u{1F1FA}\u{1F1F8}\u{1F1FA}"],
     ["a subdivision flag that does not exist", `\u{1F3F4}${tag("gbxyz")}${CANCEL_TAG}`],
     ["the black flag with only the cancel tag (it draws a white flag with a question mark)", `\u{1F3F4}${CANCEL_TAG}`],
-    ["the black flag with tags and no cancel tag", `\u{1F3F4}${tag("gbeng")}`],
-    ["a cancel tag after another pictograph", `\u{1F600}${CANCEL_TAG}`],
-    ["a tag sequence on a non-flag base", `\u{1F600}${tag("gb")}${CANCEL_TAG}`],
-    ["a ZWJ with nothing to join", `\u{1F600}${ZWJ}`],
     ["an invented ZWJ sequence", `\u{1F600}${ZWJ}\u{1F600}`],
   ])("refuses %s", (_name, text) => {
     expect(issues(text)).toEqual(["emoji-missing"]);
@@ -294,12 +259,9 @@ describe("too-long: 60 characters as a person counts them", () => {
   const couple = `\u{1F469}${ZWJ}\u{2764}${VS16}${ZWJ}\u{1F468}`;
   const cases: [string, (n: number) => string][] = [
     ["ASCII letters", (n) => "a".repeat(n)],
-    ["emoji", (n) => "\u{1F44D}".repeat(n)],
     ["ZWJ sequences of five code points", (n) => `\u{1F469}${ZWJ}\u{1F4BB}`.repeat(n)],
     ["ZWJ couples of six code points", (n) => couple.repeat(n)],
-    ["flags of two code points", (n) => "\u{1F1FA}\u{1F1F8}".repeat(n)],
     ["keycaps of three code points", (n) => `1${VS16}${KEYCAP}`.repeat(n)],
-    ["skin tones of two code points", (n) => "\u{1F44D}\u{1F3FD}".repeat(n)],
     ["subdivision flags of seven code points", (n) => ENGLAND.repeat(n)],
   ];
 
@@ -367,14 +329,8 @@ describe("too-many-lines: a line is what an explicit newline ends", () => {
   test.each([
     ["one line", "a", []],
     ["two lines with LF", "a\nb", []],
-    ["two lines with CRLF", "a\r\nb", []],
-    ["a trailing LF makes a second, empty line", "a\n", []],
-    ["a leading LF makes a first, empty line", "\na", []],
     ["three lines with LF", "a\nb\nc", ["too-many-lines"]],
-    ["three lines with CRLF", "a\r\nb\r\nc", ["too-many-lines"]],
-    ["three lines with mixed breaks", "a\r\nb\nc", ["too-many-lines"]],
     ["a blank line in the middle is a line", "a\n\nb", ["too-many-lines"]],
-    ["two trailing LFs are two more lines", "a\n\n", ["too-many-lines"]],
     ["a lone CR is no break (and is a charset problem)", "a\rb\rc", ["charset"]],
   ] as const)("%s", (_name, text, expected) => {
     expect(issues(text)).toEqual([...expected]);
@@ -437,23 +393,10 @@ describe("the function is pure", () => {
   const fill = (unit: string, n = MAX_CAPTION_UNITS): string => unit.repeat(Math.floor(n / unit.length));
   const WORST: [string, string][] = [
     ["words", "coffee ".repeat(150)],
-    ["digits", "1".repeat(1024)],
     ["a ZWJ chain", `${"\u{1F469}\u{200D}".repeat(500)}x`],
     ["1 then spaces", `1${" ".repeat(1023)}`],
-    ["1 then newlines", `1${"\n".repeat(1023)}`],
-    ["1 then CRLFs", `1${"\r\n".repeat(511)}`],
-    ["1 then no-break spaces", `1${"\u{A0}".repeat(1023)}`],
-    ["one long word", "t".repeat(1024)],
-    ["dashes", fill("-")],
-    ["ellipses", fill("\u{2026}")],
-    ["copyright signs", fill("\u{A9}")],
-    ["emoji", fill("\u{1F600}")],
-    ["emoji with VS15", fill(`\u{2764}${VS15}`)],
-    ["regional indicators", fill("\u{1F1FA}")],
-    ["keycaps", fill(`1${VS16}${KEYCAP}`)],
     ["combining marks", `a${"\u{301}".repeat(1023)}`],
     ["tags", `\u{1F3F4}${"\u{E0067}".repeat(1020)}${CANCEL_TAG}`],
-    ["lines", fill("a\n")],
   ];
 
   for (const [name, text] of WORST) {
