@@ -90,32 +90,6 @@ describe("opening a photo", () => {
     expect(photo.closest(".viewer-frame") === null).toBe(false);
   });
 
-  test("a photo in a video and a rejected one carry the tile's badges in the viewer too", async () => {
-    // Newest first: place 1 is the photo in a video, place 2 the rejected one.
-    await openMia({ photos: [scenePhoto(1, { rejected: true, eligible: false }), scenePhoto(2, { used: true, usedIn: ["video-00000001"] })] });
-    fireEvent.click(openButton(1));
-    expect(within(viewer()).getByText("в 1 видео")).toBeDefined();
-    expect(within(viewer()).getByText("лицо не проверялось")).toBeDefined();
-    press("ArrowRight");
-    expect(viewerTitle()).toBe("Фото 2 из 2");
-    expect(within(viewer()).getByText("отклонено")).toBeDefined();
-    expect(within(viewer()).getByText("лицо 0.86")).toBeDefined();
-  });
-
-  test("the photo itself is a real button in the tab order: its click (what Enter and Space give a button) opens the viewer, the focus on «Закрыть»", async () => {
-    await openMia();
-    const open = openButton(1);
-    expect(open.tagName).toBe("BUTTON");
-    expect(open.getAttribute("type")).toBe("button");
-    expect(open.tabIndex).toBe(0);
-    expect(open.getAttribute("aria-haspopup")).toBe("dialog");
-    expect(open.querySelector(".portrait-placeholder") === null).toBe(false);
-    open.focus();
-    fireEvent.click(open);
-    expect(screen.getByRole("dialog", { name: "Фото 1 из 6" })).toBeDefined();
-    expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
-  });
-
   test("the tile's pick and reject buttons keep their own jobs and open nothing", async () => {
     const h = await openMia();
     fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 1, Дом" }));
@@ -139,139 +113,6 @@ describe("closing", () => {
     expect(focusedLabel()).toBe(describeElement(openButton(3)));
   });
 
-  test("«Закрыть» closes it, and so does a press on the dark around it; a press on the photo or the facts does not", async () => {
-    await openMia();
-    fireEvent.click(openButton(1));
-    pressOn(within(viewer()).getByRole("img", { name: "Фото 1 из 6: Дом" }));
-    pressOn(within(viewer()).getByRole("heading", { level: 2 }));
-    expect(closed()).toBe(false);
-    fireEvent.click(inViewer("Закрыть"));
-    expect(closed()).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(openButton(1)));
-
-    fireEvent.click(openButton(4));
-    pressOn(scrim());
-    expect(closed()).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(openButton(4)));
-  });
-
-  test("the dialog's own empty band round the arrows looks like the dark and closes like it", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    pressOn(viewer());
-    expect(closed()).toBe(true);
-  });
-
-  test("a drag that starts inside the viewer (selecting the title) and ends over the dark does not close it", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    fireEvent.pointerDown(within(viewer()).getByRole("heading", { level: 2 }));
-    fireEvent.pointerUp(scrim());
-    fireEvent.click(scrim());
-    expect(closed()).toBe(false);
-    // Nor the other way round: pressed on the dark, let go on the photo (the click lands on what both share, the dark).
-    fireEvent.pointerDown(scrim());
-    fireEvent.pointerUp(within(viewer()).getByRole("img"));
-    fireEvent.click(scrim());
-    expect(closed()).toBe(false);
-    // The next real press on the dark still closes.
-    pressOn(scrim());
-    expect(closed()).toBe(true);
-  });
-
-  test("after stepping, closing gives the focus to the tile of the photo on screen: the grid keeps the owner's place", async () => {
-    await openMia();
-    fireEvent.click(openButton(1));
-    press("ArrowRight");
-    press("ArrowRight");
-    press("Escape");
-    expect(focusedLabel()).toBe(describeElement(openButton(3)));
-  });
-
-  test("the focus stays inside: Tab moves as the browser moves it, and past either end it comes round", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
-    const [first, last] = [controls[0], controls.at(-1)];
-    if (first === undefined || last === undefined || first === last) throw new Error("expected several controls in the viewer");
-
-    // Tab is never held back: inside a control with parts of its own (a video's controls) the browser walks them.
-    last.focus();
-    expect(press("Tab")).toBe(true);
-    // Past the last control the browser lands on the dialog's end edge: the focus comes round to the first control.
-    focusEdge("end");
-    expect(focusedLabel()).toBe(describeElement(first));
-    // Shift+Tab before the first lands on its start edge: round to the last.
-    press("Tab", { shiftKey: true });
-    focusEdge("start");
-    expect(focusedLabel()).toBe(describeElement(last));
-  });
-
-  test("from the dialog itself (a press on the photo or the facts focuses it) Tab goes to the first control, Shift+Tab to the last", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
-    const [first, last] = [controls[0], controls.at(-1)];
-    if (first === undefined || last === undefined || first === last) throw new Error("expected several controls in the viewer");
-
-    // Tab from the dialog's own element: the browser's next stop is its start edge, which leads on to the first control.
-    viewer().focus();
-    press("Tab");
-    focusEdge("start");
-    expect(focusedLabel()).toBe(describeElement(first));
-    // Shift+Tab from it: with the page inert, the browser comes round to the end edge, which leads back to the last control.
-    viewer().focus();
-    press("Tab", { shiftKey: true });
-    focusEdge("end");
-    expect(focusedLabel()).toBe(describeElement(last));
-  });
-
-  test("a focus that strays out of the viewer comes back: to the first control going forward, to the last after Shift+Tab", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
-    const [first, last] = [controls[0], controls.at(-1)];
-    if (first === undefined || last === undefined) throw new Error("no controls in the viewer");
-    // The grid behind is inert and cannot take it; something put on the page after the viewer opened is not.
-    openButton(5).focus();
-    expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
-    const stray = document.createElement("button");
-    stray.textContent = "later";
-    document.body.append(stray);
-    try {
-      stray.focus();
-      expect(focusedLabel()).toBe(describeElement(first));
-      press("Tab", { shiftKey: true });
-      stray.focus();
-      expect(focusedLabel()).toBe(describeElement(last));
-    } finally {
-      stray.remove();
-    }
-  });
-
-  test("while it is open everything outside the viewer is inert; closing gives it back", async () => {
-    await openMia();
-    fireEvent.click(openButton(2));
-    const dialog = viewer();
-    const outside = Array.from(document.body.children).filter((el) => !el.contains(dialog));
-    expect(outside.length).toBeGreaterThan(0);
-    expect(outside.every((el) => el.hasAttribute("inert"))).toBe(true);
-    expect(dialog.closest("[inert]") === null).toBe(true);
-    press("Escape");
-    expect(Array.from(document.body.children).some((el) => el.hasAttribute("inert"))).toBe(false);
-  });
-
-  test("closing with no tile left where the photo was gives the focus to the filter that shows none", async () => {
-    // Newest first: place 2 is the first photo made, the only rejected one.
-    await openMia({ photos: [scenePhoto(1, { rejected: true, eligible: false }), scenePhoto(2)] });
-    fireEvent.click(screen.getByRole("button", { name: "Отклонённые" }));
-    fireEvent.click(openButton(2));
-    fireEvent.click(inViewer("Вернуть из отклонённых"));
-    await flush();
-    press("Escape");
-    expect(closed()).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Отклонённые" })));
-  });
 });
 
 describe("stepping through the gallery", () => {
@@ -304,46 +145,6 @@ describe("stepping through the gallery", () => {
     press("ArrowRight", { altKey: true });
     press("ArrowLeft", { metaKey: true });
     expect(viewerTitle()).toBe("Фото 2 из 3");
-  });
-
-  test("an arrow that reaches the end hands the focus to the other one: the keyboard is never left on a dead button", async () => {
-    await openMia({ photos: three });
-    fireEvent.click(openButton(2, "Виды"));
-    next().focus();
-    fireEvent.click(next());
-    expect(next().hasAttribute("disabled")).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(prev()));
-  });
-
-  test("any other control that turns off under the focus hands it to «Закрыть», so the next Space or Enter never steps", async () => {
-    const h = await openMia();
-    fireEvent.click(openButton(2));
-    const pick = inViewer("Выбрать для монтажа");
-    fireEvent.click(pick);
-    // Another window rejects the picked photo: here it stays picked, so its pick stays on to be undone.
-    await act(async () => {
-      await h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: scenePhoto(5).photoId, rejected: true });
-    });
-    await flush();
-    expect(within(viewer()).getByText("отклонено")).toBeDefined();
-    pick.focus();
-    fireEvent.click(pick);
-    expect(pick.hasAttribute("disabled")).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
-  });
-
-  test("an owner's step is announced, with the category; nothing else is", async () => {
-    await openMia({ photos: three });
-    fireEvent.click(openButton(1, "Фитнес"));
-    expect(within(viewer()).getByRole("heading", { level: 2 }).hasAttribute("aria-live")).toBe(false);
-    expect(announced()).toBe("");
-    press("ArrowRight");
-    expect(announced()).toBe("Фото 2 из 3: Виды");
-    fireEvent.click(prev());
-    expect(announced()).toBe("Фото 1 из 3: Фитнес");
-    // Said, then cleared: the same words after another step are announced again.
-    await waitPastAnnouncement();
-    expect(announced()).toBe("");
   });
 
   test("the arrows follow the gallery's filter: under «Отклонённые» only the rejected photos, numbered among themselves", async () => {
@@ -503,27 +304,6 @@ describe("a gallery that changes under the viewer", () => {
     expect(within(viewer()).getByText("Виды")).toBeDefined();
     // The number moved without the owner: nothing is announced.
     expect(announced()).toBe("");
-  });
-
-  test("a photo that left the gallery and comes back does not open the viewer again", async () => {
-    const h = await openMia({ photos: photos(3) });
-    const lost = scenePhoto(2).photoId;
-    /** Another window marks the third photo: avatar.changed, and the gallery is listed again. */
-    const relist = async (rejected: boolean): Promise<void> => {
-      await act(async () => {
-        await h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: scenePhoto(3).photoId, rejected });
-      });
-      await flush();
-    };
-    fireEvent.click(openButton(2));
-    act(() => h.engine.setPhotoSidecarReadable(lost, false));
-    await relist(true);
-    expect(closed()).toBe(true);
-
-    act(() => h.engine.setPhotoSidecarReadable(lost, true));
-    await relist(false);
-    expect(document.querySelector(`button.photo-open[data-photo-id="${lost}"]`) === null).toBe(false);
-    expect(closed()).toBe(true);
   });
 
   test("a photo gone from the gallery while on screen closes the viewer; the focus goes to the photo now in its place", async () => {

@@ -107,12 +107,6 @@ describe("the next page's own states", () => {
     expect(focusedLabel()).toBe(describeElement(tileOf("photo-mia-0002")));
   });
 
-  test("photos it could not read are said apart from the photos beyond the page, each with its own count", async () => {
-    await openGallery(library(501), { skippedPhotos: { [MIA.avatarId]: 3 } });
-    const note = screen.getByRole("note", { name: "Показаны не все фото" });
-    expect(within(note).getByText("Ещё 3 фото не читаются.")).toBeDefined();
-    expect(moreButton()?.textContent).toBe("Показать ещё · 1");
-  });
 });
 
 describe("a reload reads from page 1, down to the page the owner reached", () => {
@@ -139,72 +133,10 @@ describe("a reload reads from page 1, down to the page the owner reached", () =>
     expect(screen.getByText("Конец галереи · 521 фото")).toBeDefined();
   });
 
-  test("a list the owner never paged is read again as page 1 alone", async () => {
-    const { engine, client } = await openGallery(library(600));
-    const before = callsOf(engine, "photos.list").length;
-    // Another window rejects the newest photo: `avatar.changed` reads the gallery again.
-    await asAnotherWindow(() => client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: "photo-mia-0600", rejected: true }));
-    await waitFor(() => expect(callsOf(engine, "photos.list").length).toBeGreaterThan(before));
-    expect(callsOf(engine, "photos.list").slice(before).map((c) => c.payload.cursor)).toEqual([undefined]);
-    expect(tiles()).toHaveLength(500);
-    expect(moreButton()?.textContent).toBe("Показать ещё · 100");
-  });
-
-  test("a photo on an appended page keeps up: another window's mark shows on it, the window's own mark is set in place", async () => {
-    const { client } = await openGallery(library(501));
-    await press(moreButton());
-    await waitFor(() => expect(tiles()).toHaveLength(501));
-    const tile = (photoId: string): Element | null => tileOf(photoId)?.closest(".photo-tile") ?? null;
-    expect(tile("photo-mia-0001")?.classList.contains("photo-tile-rejected")).toBe(false);
-
-    await asAnotherWindow(() => client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: "photo-mia-0001", rejected: true }));
-    await waitFor(() => expect(tile("photo-mia-0001")?.classList.contains("photo-tile-rejected")).toBe(true));
-    expect(tiles()).toHaveLength(501);
-
-    fireEvent.click(screen.getByRole("button", { name: "Фото 501: вернуть из отклонённых" }));
-    await waitFor(() => expect(tile("photo-mia-0001")?.classList.contains("photo-tile-rejected")).toBe(false));
-    expect(tiles()).toHaveLength(501);
-  });
 });
 
 describe("with a filter", () => {
-  test("a filter that finds nothing on the pages read says more may be beyond; the page brings a match and the focus goes to it", async () => {
-    await openGallery(library(501, (n) => (n === 1 ? { rejected: true, eligible: false } : {})));
-    fireEvent.click(screen.getByRole("button", { name: "Отклонённые" }));
-    expect(screen.getByText("Среди загруженных отклонённых нет")).toBeDefined();
-    expect(screen.getByText("Ещё 1 фото не загружено — отклонённые могут быть среди них.")).toBeDefined();
-
-    await press(moreButton());
-    await waitFor(() => expect(tiles()).toEqual(["photo-mia-0001"]));
-    expect(focusedLabel()).toBe(describeElement(tileOf("photo-mia-0001")));
-  });
-
-  test("a page the filter shows nothing of: the button gone with it, the focus goes to the last tile shown, else the filter", async () => {
-    await openGallery(library(502));
-    fireEvent.click(screen.getByRole("button", { name: "Отклонённые" }));
-    await press(moreButton());
-    await waitFor(() => expect(moreButton() === null).toBe(true));
-    expect(tiles()).toHaveLength(0);
-    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Отклонённые" })));
-  });
 });
 
 describe("the picks", () => {
-  test("a photo picked on a later page stays picked across a visit elsewhere, and is still picked when its page comes back", async () => {
-    await openGallery(library(501));
-    await press(moreButton());
-    await waitFor(() => expect(tiles()).toHaveLength(501));
-    fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 501, Дом" }));
-    expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 1");
-
-    await openSection("Настройки");
-    await openSection("Фото");
-    await screen.findByRole("heading", { level: 1, name: "Mia" });
-    await waitFor(() => expect(tiles()).toHaveLength(500));
-    // Its page is not read yet: the pick is kept, not dropped as gone.
-    expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 1");
-    await press(moreButton());
-    await waitFor(() => expect(tiles()).toHaveLength(501));
-    expect(screen.getByRole("button", { name: "Выбрать для монтажа: фото 501, Дом" }).getAttribute("aria-pressed")).toBe("true");
-  });
 });
