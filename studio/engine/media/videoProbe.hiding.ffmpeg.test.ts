@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from
 import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MediaImportCall } from "./imports";
-import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { JobRegistry } from "../jobs";
@@ -58,14 +57,7 @@ async function imported(bytes: Uint8Array, pick: MediaImportCall["pick"]): Promi
 
 const STREAM_PART_BOXES: HidingBox[] = ["meta", "sinf", "schi", "wave", "traf", "mvex", "udta-meta", "tref", "udta"];
 const HANDLER_BOXES: ("sinf" | "wave" | "traf" | "meta" | "schi" | "mvex")[] = ["sinf", "wave", "traf", "meta", "schi", "mvex"];
-const PUSH_PARTS: HidingBox[] = ["meta", "traf", "udta"];
-const PUSH_HANDLERS: (typeof HANDLER_BOXES)[number][] = ["sinf", "traf"];
 const TRAK_HOMES: TrakHome[] = ["moov/udta", "moov/meta", "top/udta"];
-
-/** A push runs the boxes in `onPush` (one witness of each walker path); the rest of `all` run in the heavy run. `title` takes the box name. */
-function eachBox<T extends string>(all: readonly T[], onPush: readonly T[], title: (box: T) => string, body: (box: T) => Promise<void>): void {
-  for (const box of all) (onPush.includes(box) ? test : heavyTest)(title(box), () => body(box));
-}
 
 /** H.264 128 x 64 and AAC, five seconds: the video is the first track. */
 async function videoWithSound(): Promise<Uint8Array> {
@@ -82,13 +74,13 @@ describe("the control", () => {
 });
 
 describe("a video track's stream parts hidden in a box of the trak that ffmpeg descends", () => {
-  eachBox(STREAM_PART_BOXES, PUSH_PARTS, (box) => `trak/${box}: the walker refuses the file, it does not judge the second track and say ok`, async (box) => {
+  test.each(STREAM_PART_BOXES)("trak/%s: the walker refuses the file, it does not judge the second track and say ok", async (box) => {
     const probe = await probeVideo(bytesSource(withFirstVideoPartsIn(await twoVideos(), box)));
     expect(probe.ok).toBe(false);
     if (!probe.ok) expect(probe.reason).toMatch(/^hidden-/);
   });
 
-  eachBox(STREAM_PART_BOXES, PUSH_PARTS, (box) => `trak/${box}: the import is not \`done\`, through video and through any`, async (box) => {
+  test.each(STREAM_PART_BOXES)("trak/%s: the import is not `done`, through video and through any", async (box) => {
     const bytes = withFirstVideoPartsIn(await twoVideos(), box);
     expect(await imported(bytes, "video")).toBe("failed:video:structure");
     expect(await imported(bytes, "any")).toBe("failed:video:structure");
@@ -106,7 +98,7 @@ describe("the form with nothing in the usual places: trak{tkhd, minf}", () => {
 });
 
 describe("an `hdlr vide` hidden in a box of a track the walker takes for sound", () => {
-  eachBox(HANDLER_BOXES, PUSH_HANDLERS, (box) => `trak/${box}: refused as a hidden handler`, async (box) => {
+  test.each(HANDLER_BOXES)("trak/%s: refused as a hidden handler", async (box) => {
     const probe = await probeVideo(bytesSource(withFirstTrackHiddenHandlerIn(await twoVideos(), box)));
     expect(probe).toEqual({ ok: false, reason: "hidden-handler" });
   });
@@ -115,7 +107,7 @@ describe("an `hdlr vide` hidden in a box of a track the walker takes for sound",
 describe("a whole track in a box outside moov's own list of tracks (measured: ffmpeg does NOT read it as a stream)", () => {
   // The control that bounds the rule: a `trak` inside `moov/udta`, `moov/meta` or a top-level `udta` is NOT a stream (ffmpeg's `udta` is not a track's parent), so the walker is
   // right to judge only the tracks of `moov`, and refusing these would refuse files ffmpeg reads as they are. The file below has one video stream by ffmpeg's own count.
-  eachBox(TRAK_HOMES, ["moov/udta"], (home) => `${home}: ffmpeg sees ONE video stream, the second track, which the walker judged: the import is \`done\``, async (home) => {
+  test.each(TRAK_HOMES)("%s: ffmpeg sees ONE video stream, the second track, which the walker judged: the import is `done`", async (home) => {
     const bytes = withFirstTrakIn(await twoVideos(), home);
     expect((await probeVideo(bytesSource(bytes))).ok).toBe(true);
     expect(await imported(bytes, "video")).toBe("done:video");
@@ -123,7 +115,7 @@ describe("a whole track in a box outside moov's own list of tracks (measured: ff
 });
 
 describe("the audio importer's own check (3f.4's `0:V` must match nothing) stands behind the route", () => {
-  eachBox(STREAM_PART_BOXES, ["meta"], (box) => `a video hidden in trak/${box} beside a sound track: picked as audio it is refused as a format, and as any it is not \`done\``, async (box) => {
+  test.each(STREAM_PART_BOXES)("a video hidden in trak/%s beside a sound track: picked as audio it is refused as a format, and as any it is not `done`", async (box) => {
     const bytes = withFirstVideoPartsIn(await videoWithSound(), box);
     expect(await imported(bytes, "audio")).toBe("failed:audio:format");
     expect(await imported(bytes, "any")).not.toMatch(/^done/);
