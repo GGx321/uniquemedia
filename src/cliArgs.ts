@@ -3,6 +3,7 @@ import {
   resolveExportFormat,
   resolveFirstFrameMode,
   resolveIdentityMode,
+  resolveTiltAxis,
   type MediaRoute,
 } from "./node/mediaRoute";
 import type { FirstFrameMode, StartOptions } from "./core/types";
@@ -81,5 +82,8 @@ export function parseStartOptions(argv: readonly string[], route: MediaRoute): S
     ...parseFirstFrame(argv),
     frame: parseFrame(argv),
     capcutMark: flag(argv, "capcut-mark"),
+    distortion: flag(argv, "distort"),
+    distortionAxis: resolveTiltAxis(arg(argv, "distort-axis"), "h"),
+    distortionStrength: Number(arg(argv, "distort-strength", "0.5")),
   };
 }

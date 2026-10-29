@@ -36,6 +36,9 @@ const opts = (bg: string): ResolvedCopyOptions => ({
   targetDistance: 38,
   identity: "engine",
   edgeMode: "auto",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
   frame: { backgrounds: [bg] },
 });

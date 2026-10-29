@@ -11,6 +11,7 @@ export const CH = {
   pickFile: "pick-file",
   pickCover: "pick-cover",
   probe: "probe",
+  posterFrame: "poster-frame",
   chooseOutDir: "choose-out-dir",
   start: "start",
   cancel: "cancel",
@@ -35,6 +36,10 @@ export interface Api {
   /** Null when the file could not be identified: the main process has already
    *  reported the reason through `onError`, unwrapped. */
   probe(path: string): Promise<MediaInfo | null>;
+  /** A frame of the video as a data URL, for the distortion preview. Null for
+   *  a still or an unreadable file: the preview is a nicety, so a failure
+   *  never surfaces as a dialog. */
+  posterFrame(path: string): Promise<string | null>;
   chooseOutDir(): Promise<string | null>;
   start(req: { input: string; opts: StartOptions; count: number; outDir: string }): Promise<void>;
   cancel(): Promise<void>;

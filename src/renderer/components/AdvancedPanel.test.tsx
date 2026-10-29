@@ -15,6 +15,9 @@ const base: AdvancedValue = {
   cover: null,
   frame: false,
   capcutMark: false,
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0.5,
 };
 
 /** The panel with the pick callback wired, for the tests that click it. */
@@ -22,9 +25,12 @@ function renderPanel(
   kind: "video" | "photo",
   value: AdvancedValue,
   onChange: (v: AdvancedValue) => void = () => {},
-  onPickCover: () => void = () => {}
+  onPickCover: () => void = () => {},
+  poster: string | null = null
 ) {
-  return render(<AdvancedPanel kind={kind} value={value} onChange={onChange} onPickCover={onPickCover} />);
+  return render(
+    <AdvancedPanel kind={kind} value={value} onChange={onChange} onPickCover={onPickCover} poster={poster} />
+  );
 }
 
 test("toggles keep-trend-audio", () => {
@@ -364,4 +370,92 @@ test.each(["engine", "clean"] as const)(
 test("the CapCut-mark switch is hidden for a photo, the mark being a video-container key", () => {
   render(<AdvancedPanel kind="photo" value={{ ...base, identity: "iphone" }} onChange={() => {}} onPickCover={() => {}} />);
   expect(screen.queryByLabelText(CAPCUT_LABEL)).toBeNull();
+});
+
+// ── «Искажение»: toggle, axis, strength, live preview ──────────────────────
+
+const AXIS_LABEL = "Ось наклона";
+const TILT_STRENGTH_LABEL = "Сила наклона";
+
+test("a video offers the distortion toggle, off by default", () => {
+  renderPanel("video", { ...base });
+  const toggle = screen.getByLabelText("Искажение");
+  expect(toggle).toBeDefined();
+  expect((toggle as HTMLInputElement).checked).toBe(false);
+});
+
+test("a photo does not offer the distortion toggle", () => {
+  renderPanel("photo", { ...base });
+  expect(screen.queryByLabelText("Искажение")).toBeNull();
+});
+
+test("with distortion off, the axis, the strength and the preview are hidden", () => {
+  const { container } = renderPanel("video", { ...base, distortion: false });
+  expect(screen.queryByRole("radiogroup", { name: AXIS_LABEL })).toBeNull();
+  expect(screen.queryByLabelText(TILT_STRENGTH_LABEL)).toBeNull();
+  expect(container.querySelector(".tilt-preview")).toBeNull();
+});
+
+test("switching distortion on puts distortion: true in the value", () => {
+  let v: AdvancedValue = { ...base };
+  renderPanel("video", v, (x) => (v = x));
+  fireEvent.click(screen.getByLabelText("Искажение"));
+  expect(v.distortion).toBe(true);
+});
+
+test("with distortion on, the axis control offers the three axes in order, and the strength slider shows", () => {
+  renderPanel("video", { ...base, distortion: true });
+  const group = screen.getByRole("radiogroup", { name: AXIS_LABEL });
+  const labels = within(group).getAllByRole("radio").map((r) => r.textContent);
+  expect(labels).toEqual(["Горизонталь", "Вертикаль", "Оба"]);
+  expect(screen.getByLabelText(TILT_STRENGTH_LABEL)).toBeDefined();
+});
+
+test("choosing «Вертикаль» puts distortionAxis: v in the value", () => {
+  let v: AdvancedValue = { ...base, distortion: true };
+  renderPanel("video", v, (x) => (v = x));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: AXIS_LABEL })).getByText("Вертикаль"));
+  expect(v.distortionAxis).toBe("v");
+});
+
+test("moving the tilt slider puts distortionStrength in the value and shows it as a percentage", () => {
+  let v: AdvancedValue = { ...base, distortion: true };
+  renderPanel("video", v, (x) => (v = x));
+  fireEvent.change(screen.getByLabelText(TILT_STRENGTH_LABEL), { target: { value: "0.8" } });
+  expect(v.distortionStrength).toBeCloseTo(0.8, 5);
+  expect(screen.getByText("50%")).toBeDefined();
+});
+
+test("the preview shows the poster frame, hidden from assistive tech", () => {
+  const poster = "data:image/jpeg;base64,POSTER";
+  const { container } = renderPanel("video", { ...base, distortion: true }, () => {}, () => {}, poster);
+  const preview = container.querySelector(".tilt-preview");
+  expect(preview?.getAttribute("aria-hidden")).toBe("true");
+  expect(preview?.querySelector("img")?.getAttribute("src")).toBe(poster);
+});
+
+test("without a poster the preview is a placeholder block, not an image", () => {
+  const { container } = renderPanel("video", { ...base, distortion: true });
+  expect(container.querySelector(".tilt-preview img")).toBeNull();
+  expect(container.querySelector(".tilt-preview-frame")).not.toBeNull();
+});
+
+test("the preview tilts about the chosen axis and follows the strength", () => {
+  const frameTransform = (v: AdvancedValue) => {
+    const { container, unmount } = renderPanel("video", v);
+    const t = (container.querySelector(".tilt-preview-frame") as HTMLElement).style.transform;
+    unmount();
+    return t;
+  };
+  const on = { ...base, distortion: true };
+  const h = frameTransform({ ...on, distortionAxis: "h", distortionStrength: 1 });
+  const v = frameTransform({ ...on, distortionAxis: "v", distortionStrength: 1 });
+  const both = frameTransform({ ...on, distortionAxis: "both", distortionStrength: 1 });
+  expect(h).toContain("rotateY(18deg)");
+  expect(h).not.toContain("rotateX");
+  expect(v).toContain("rotateX(18deg)");
+  expect(v).not.toContain("rotateY");
+  expect(both).toContain("rotateX(12deg)");
+  expect(both).toContain("rotateY(12deg)");
+  expect(frameTransform({ ...on, distortionAxis: "h", distortionStrength: 0.5 })).toContain("rotateY(9deg)");
 });

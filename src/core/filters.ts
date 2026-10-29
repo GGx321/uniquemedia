@@ -169,5 +169,28 @@ export const FRAGMENTS: Record<string, Fragment> = {
     return `noise=c0s=${s}:c0f=u,lutyuv=y='${y}'`;
   },
 
+  /** User-controlled perspective tilt («distortion»): `h` warps the frame around
+   *  its vertical axis, `v` around its horizontal axis. Both are signed keystone
+   *  fractions; the sign picks which edge is pulled in, so copies made from the
+   *  same slider value but different seeds tilt in different directions. ffmpeg's
+   *  `perspective` (default `sense=source`) maps this inset quad of the INPUT
+   *  onto the output's corners, so the warped picture fills the frame with no
+   *  black wedge — the pulled-in edge is simply stretched. Coordinates are W/H
+   *  expressions, so the warp is exact whatever size the earlier ops left the
+   *  frame. */
+  tilt: (p) => {
+    const h = n(p.h);
+    const v = n(p.v);
+    if (h === 0 && v === 0) return null;
+    const ah = round(Math.abs(h) / 2, 4); // vertical-edge inset, as a fraction of H
+    const av = round(Math.abs(v) / 2, 4); // horizontal-edge inset, as a fraction of W
+    let tlx = "0", tly = "0", trx = "W", tryy = "0", blx = "0", bly = "H", brx = "W", bry = "H";
+    if (h > 0) { tryy = `H*${ah}`; bry = `H-H*${ah}`; }       // right edge pulled in
+    else if (h < 0) { tly = `H*${ah}`; bly = `H-H*${ah}`; }   // left edge pulled in
+    if (v > 0) { tlx = `W*${av}`; trx = `W-W*${av}`; }        // top edge pulled in
+    else if (v < 0) { blx = `W*${av}`; brx = `W-W*${av}`; }   // bottom edge pulled in
+    return `perspective=${tlx}:${tly}:${trx}:${tryy}:${blx}:${bly}:${brx}:${bry}:interpolation=linear`;
+  },
+
   hflip: (p) => (p.on ? "hflip" : null),
 };

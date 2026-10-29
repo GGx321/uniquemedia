@@ -70,6 +70,11 @@ const FRAME_RNG_SALT = 0x46524d45;
 const FRAME_MIN_SCALE = 0.9;
 const FRAME_MAX_SCALE = 0.95;
 
+/** Distortion's own stream, for the same reason. */
+const TILT_RNG_SALT = 0x54494c54;
+/** The lean at slider 1, as a keystone fraction. */
+const MAX_TILT = 0.1;
+
 const evenRound = (v: number): number => 2 * Math.round(v / 2);
 
 /**
@@ -135,8 +140,23 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     { id: "rotate", params: { deg: round(dev(rng, "rotateDeg", s)) } },
     { id: "perspective", params: { off: round(dev(rng, "perspective", s, true)) } },
     { id: "lenscorrection", params: { k1: round(dev(rng, "lens", s)) } },
-    { id: "noise", params: { strength: Math.round(dev(rng, "noise", s, true)) } },
   );
+
+  // User-controlled distortion. Its own stream, so switching it on or off moves
+  // no other draw, and its size ignores `s`: the slider is an absolute setting,
+  // not part of the visual-change budget. It sits before `noise` so the grain
+  // stays the last spatial op.
+  if (opts.distortion && opts.distortionStrength > 0) {
+    const rngT = makeRng((seed ^ TILT_RNG_SALT) >>> 0);
+    const nominal = clamp(opts.distortionStrength, 0, 1) * MAX_TILT;
+    const axis = opts.distortionAxis;
+    const draw = () => (rngT() < 0.5 ? -1 : 1) * nominal * (0.7 + 0.3 * rngT());
+    const h = axis === "h" || axis === "both" ? round(draw(), 4) : 0;
+    const v = axis === "v" || axis === "both" ? round(draw(), 4) : 0;
+    video.push({ id: "tilt", params: { h, v } });
+  }
+
+  video.push({ id: "noise", params: { strength: Math.round(dev(rng, "noise", s, true)) } });
 
   // Determinism invariant: same seed + same opts => same recipe. The mirror draw
   // below is conditional, so changing `allowMirror` shifts the rng stream for the

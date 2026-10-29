@@ -97,6 +97,21 @@ export async function probeForHost(
   }
 }
 
+/**
+ * A frame of a video, as a data URL, for the distortion preview. Null for a
+ * still and for anything that fails — the preview is optional, so nothing is
+ * thrown and nothing is reported.
+ */
+export async function posterFrameForHost(input: string, backends: Backends): Promise<string | null> {
+  try {
+    const route = await routeForInput(input, backends);
+    if (route.kind !== "video") return null;
+    return await route.executor.extractThumbnail(input);
+  } catch {
+    return null;
+  }
+}
+
 export interface StartRequest {
   input: string;
   opts: StartOptions;

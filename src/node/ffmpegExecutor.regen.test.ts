@@ -28,6 +28,9 @@ const opts: ResolvedCopyOptions = {
   targetDistance: 10,
   identity: "engine",
   edgeMode: "crop",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
 };
 

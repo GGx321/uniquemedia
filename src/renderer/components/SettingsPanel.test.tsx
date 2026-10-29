@@ -22,6 +22,9 @@ const state: SettingsState = {
     cover: null,
     frame: true,
     capcutMark: false,
+    distortion: false,
+    distortionAxis: "h",
+    distortionStrength: 0.5,
   },
 };
 
@@ -64,7 +67,25 @@ test("settingsToOptions maps every CopyOptions field", () => {
     coverPath: null,
     frame: true,
     capcutMark: false,
+    distortion: false,
+    distortionAxis: "h",
+    distortionStrength: 0.5,
   });
+});
+
+test("distortion rides with the video options and is dropped for a photo", () => {
+  const on = {
+    ...state,
+    advanced: { ...state.advanced, distortion: true, distortionAxis: "both" as const, distortionStrength: 0.8 },
+  };
+  const opts = settingsToOptions(on);
+  expect(opts.distortion).toBe(true);
+  expect(opts.distortionAxis).toBe("both");
+  expect(opts.distortionStrength).toBe(0.8);
+  const photo = settingsToPhotoOptions(on);
+  expect("distortion" in photo).toBe(false);
+  expect("distortionAxis" in photo).toBe(false);
+  expect("distortionStrength" in photo).toBe(false);
 });
 
 test("settingsToOptions sends the chosen cover's path, and only the path", () => {

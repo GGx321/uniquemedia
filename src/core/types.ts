@@ -96,6 +96,16 @@ export const FIRST_FRAME_MODES = ["off", "black", "photo"] as const;
 
 export type FirstFrameMode = (typeof FIRST_FRAME_MODES)[number];
 
+/**
+ * Which way the user-controlled distortion leans the picture: `h` turns it
+ * around its vertical axis, `v` around its horizontal one, `both` does both.
+ * Same list-first shape as EXPORT_FORMATS, so a host can validate a
+ * `--distort-axis` argument against the real set.
+ */
+export const TILT_AXES = ["h", "v", "both"] as const;
+
+export type TiltAxis = (typeof TILT_AXES)[number];
+
 /** What the pipeline itself needs, regardless of media type. */
 export interface UniquifyOptions {
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
@@ -125,6 +135,14 @@ export interface CopyOptions extends PhotoCopyOptions {
   coverPath: string | null;
   /** Put each copy in a frame over a nature background. */
   frame: boolean;
+  /** Video only: lean every copy in perspective («distortion»). Off leaves the
+   *  recipe exactly as it is without the mode. */
+  distortion: boolean;
+  /** Which axis the lean is on. Read only when `distortion` is on. */
+  distortionAxis: TiltAxis;
+  /** The slider, 0..1: the fraction of the maximum lean. The sign (which edge
+   *  recedes) and a 70-100% spread are drawn per copy from the seed. */
+  distortionStrength: number;
 }
 
 /**
@@ -193,6 +211,11 @@ export type StartOptions = PhotoCopyOptions & {
   coverPath?: string | null;
   /** Video only: put each copy in a frame over a nature background. */
   frame?: boolean;
+  /** Video only: the distortion mode. Optional like the flags above; the video
+   *  path resolves an absence to off, axis `h`, strength 0. */
+  distortion?: boolean;
+  distortionAxis?: TiltAxis;
+  distortionStrength?: number;
 };
 
 export interface Operation {

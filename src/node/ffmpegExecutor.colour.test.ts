@@ -221,6 +221,9 @@ const opts: ResolvedCopyOptions = {
   targetDistance: 38,
   identity: "clean",
   edgeMode: "auto",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
 };
 

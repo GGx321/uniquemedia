@@ -41,7 +41,7 @@ test("extractGrayFrames returns 64x64 buffers", async () => {
 test("render produces a valid playable mp4", async () => {
   const info = await exec.probe(input);
   const recipe = sampleRecipe(
-    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" } },
+    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" }, distortion: false, distortionAxis: "h", distortionStrength: 0 },
     7,
     1
   );
@@ -64,6 +64,9 @@ test("light zoom-crop pipeline passes PDQ target 45 within a few attempts", asyn
     targetDistance: 45,
     identity: "engine",
     edgeMode: "auto",
+    distortion: false,
+    distortionAxis: "h",
+    distortionStrength: 0,
     firstFrame: { mode: "off" },
   };
 

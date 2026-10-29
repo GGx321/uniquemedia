@@ -6,6 +6,7 @@ const api: Api = {
   pickCover: () => ipcRenderer.invoke(CH.pickCover),
   getDroppedPath: (file) => webUtils.getPathForFile(file),
   probe: (path) => ipcRenderer.invoke(CH.probe, path),
+  posterFrame: (path) => ipcRenderer.invoke(CH.posterFrame, path),
   chooseOutDir: () => ipcRenderer.invoke(CH.chooseOutDir),
   start: (req) => ipcRenderer.invoke(CH.start, req),
   cancel: () => ipcRenderer.invoke(CH.cancel),

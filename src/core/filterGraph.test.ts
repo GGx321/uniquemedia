@@ -243,3 +243,27 @@ test("without zscale the conversion is the colorspace filter's", () => {
   expect(fc).toContain(",colorspace=all=bt709:range=tv:format=yuv420p,");
   expect(fc).not.toContain("zscale");
 });
+
+test("a tilt op reaches the spatial chain before the split, between the lens and the grain", () => {
+  const tilted: Recipe = {
+    ...recipe,
+    video: [
+      { id: "lenscorrection", params: { k1: 0.002 } },
+      { id: "tilt", params: { h: 0.1, v: 0 } },
+      { id: "noise", params: { strength: 5 } },
+      ...recipe.video.filter((o) => o.id === "encode"),
+    ],
+  };
+  const fc = complexOf(buildArgs(tilted, info));
+  expect(fc.indexOf("lenscorrection")).toBeLessThan(fc.indexOf("perspective=0:0:W:H*0.05"));
+  expect(fc.indexOf("perspective=0:0:W:H*0.05")).toBeLessThan(fc.indexOf("noise=c0s=5"));
+  expect(fc.indexOf("perspective=0:0:W:H*0.05")).toBeLessThan(fc.indexOf("split=2"));
+});
+
+test("a tilt op with no lean leaves the graph exactly as it is without the op", () => {
+  const withZero: Recipe = {
+    ...recipe,
+    video: [{ id: "tilt", params: { h: 0, v: 0 } }, ...recipe.video],
+  };
+  expect(buildArgs(withZero, info)).toEqual(buildArgs(recipe, info));
+});

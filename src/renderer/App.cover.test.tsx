@@ -20,6 +20,7 @@ const fakeApi: Api = {
   pickFile: async () => "/in/clip.mp4",
   pickCover: async () => nextPick,
   getDroppedPath: () => "",
+  posterFrame: async () => null,
   probe: async () => videoInfo,
   chooseOutDir: async () => "/out",
   start: async (req) => { started.push({ opts: req.opts }); },

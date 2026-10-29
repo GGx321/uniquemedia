@@ -32,6 +32,9 @@ const initial: SettingsState = {
     // The CapCut export mark is off by default; it is offered only for a video
     // in iPhone mode (see AdvancedPanel).
     capcutMark: false,
+    distortion: false,
+    distortionAxis: "h",
+    distortionStrength: 0.5,
   },
 };
 
@@ -49,6 +52,10 @@ export function App() {
   // The inter-copy check that follows the last copy. Every card is green by
   // then, so this is the only sign the batch is still doing something.
   const [postPass, setPostPass] = useState<PostPassPhase | null>(null);
+  // The source video's frame for the distortion preview; null for a still or
+  // while it loads.
+  const [poster, setPoster] = useState<string | null>(null);
+  const posterRequest = useRef(0);
   const pathByIndex = useRef(new Map<number, string>());
 
   useEffect(() => {
@@ -94,6 +101,15 @@ export function App() {
       setCopies([]);
       setCount(0);
       pathByIndex.current.clear();
+      posterRequest.current++;
+      setPoster(null);
+      if (info.kind === "video") {
+        // A slower answer for a source that has since been replaced is dropped.
+        const current = ++posterRequest.current;
+        api.posterFrame(path)
+          .then((p) => { if (posterRequest.current === current) setPoster(p); })
+          .catch(() => { if (posterRequest.current === current) setPoster(null); });
+      }
     } catch (err) {
       // Identifying the file is now where an unreadable format is named — a
       // HEIC, say, which the bundled ffmpeg cannot open and which reports what
@@ -189,6 +205,7 @@ export function App() {
             onRun={run}
             onStop={stop}
             onPickCover={pickCover}
+            poster={poster}
           />
         </aside>
         <main className="col-queue reveal reveal-3">

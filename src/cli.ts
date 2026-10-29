@@ -11,6 +11,7 @@ async function main() {
       "[--format original|reels|feed|square] [--edges crop|fit|auto] [--out DIR] " +
       "[--target 45] [--seed 1] [--identity engine|iphone|clean] " +
       "[--first-frame off|black|photo] [--cover <image>] [--frame on|off] [--capcut-mark]\n" +
+      "[--distort] [--distort-axis h|v|both] [--distort-strength 0..1]\n" +
       "  --capcut-mark (video, iphone identity only) adds a CapCut/vicut export mark; off by default.\n" +
       "  --format defaults to reels for video and original for photo, so a still keeps its framing.\n" +
       "  --edges says how a still carries its shift at the frame edge: crop cuts an off-centre\n" +
@@ -25,6 +26,9 @@ async function main() {
       "  --frame on puts every video copy in a frame: scaled to 90-95% of the canvas (the\n" +
       "  --format size, 9:16 for original), kept off the edges, at a random offset, over a\n" +
       "  random nature background from the bundled pack. Off by default.\n" +
+      "  --distort (video only) leans every copy in perspective, as if shot at a slight angle;\n" +
+      "  --distort-axis h|v|both picks the axis (h by default), --distort-strength 0..1 sets how far\n" +
+      "  (0.5 by default, 1 is a ~10% lean). The direction is drawn per copy. Off by default.\n" +
       "  --black-first-frame is the old spelling of --first-frame black and still works.");
     process.exit(1);
   }

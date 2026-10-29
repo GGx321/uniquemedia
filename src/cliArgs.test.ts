@@ -211,3 +211,23 @@ test("--capcut-mark asks for the CapCut mark", () => {
 test("an absent --capcut-mark leaves the mark off", () => {
   expect(parseStartOptions(line("--count", "1"), route).capcutMark).toBeFalsy();
 });
+
+test("--distort turns the distortion on; without it the distortion is off", () => {
+  expect(parseStartOptions(line("--distort"), route).distortion).toBe(true);
+  expect(parseStartOptions(line("--count", "1"), route).distortion).toBe(false);
+});
+
+test("--distort-axis names the axis, and defaults to h", () => {
+  expect(parseStartOptions(line("--distort-axis", "v"), route).distortionAxis).toBe("v");
+  expect(parseStartOptions(line("--distort-axis", "both"), route).distortionAxis).toBe("both");
+  expect(parseStartOptions(line("--distort"), route).distortionAxis).toBe("h");
+});
+
+test("--distort-strength is read as a number, and defaults to 0.5", () => {
+  expect(parseStartOptions(line("--distort-strength", "0.8"), route).distortionStrength).toBe(0.8);
+  expect(parseStartOptions(line("--distort"), route).distortionStrength).toBe(0.5);
+});
+
+test("--distort-axis refuses an axis it does not know, naming it", () => {
+  expect(parseError(line("--distort", "--distort-axis", "diagonal"))).toContain("diagonal");
+});

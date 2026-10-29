@@ -32,6 +32,9 @@ const opts: ResolvedCopyOptions = {
   strength: 1.0, exportFormat: "reels", keepTrendAudio: false, allowMirror: false, targetDistance: 40,
   identity: "engine",
   edgeMode: "auto",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
 };
 

@@ -7,12 +7,14 @@ import {
   outputName,
   resolveExportFormat,
   resolveIdentityMode,
+  resolveTiltAxis,
   routeForInput,
   routeForKind,
   uniquifyRoute,
   type Backends,
   type MediaBackend,
   type PhotoBackend,
+  type PhotoRoute,
 } from "./mediaRoute";
 import { FfmpegExecutor } from "./ffmpegExecutor";
 import { PhotoExecutor } from "./photoExecutor";
@@ -378,4 +380,83 @@ test("uniquifyRoute hands the post-pass phase report through to the host", async
   // the cap of `count` rounds and the phase stops there: nothing settled
   // beyond the reference copy, and honestly so.
   expect(phases).toEqual([[0, 2], [1, 2]]);
+});
+
+test("resolveTiltAxis takes every axis the type allows", () => {
+  expect(resolveTiltAxis("h", "v")).toBe("h");
+  expect(resolveTiltAxis("v", "h")).toBe("v");
+  expect(resolveTiltAxis("both", "h")).toBe("both");
+});
+
+test("an absent --distort-axis falls back to what the host asked for", () => {
+  expect(resolveTiltAxis(undefined, "h")).toBe("h");
+  expect(resolveTiltAxis(undefined, "both")).toBe("both");
+});
+
+test("--distort-axis rejects an axis it does not know, naming what was asked for and what is allowed", () => {
+  const err = (() => {
+    try {
+      resolveTiltAxis("diagonal", "h");
+      return null;
+    } catch (e: unknown) {
+      return e;
+    }
+  })();
+  expect(err).toBeInstanceOf(Error);
+  const message = err instanceof Error ? err.message : "";
+  expect(message).toContain("diagonal");
+  expect(message).toContain("h, v, both");
+});
+
+test("a start payload without distortion fields renders video with it off", async () => {
+  const { backends, video } = fakeBackends();
+  const route = routeForKind("video", backends);
+  await uniquifyRoute(route, "SOURCE", opts, 1, {
+    seedBase: 1,
+    nowMs: NOW,
+    outputPath: (i) => outputName("clip", i, route),
+  });
+  expect(video.rendered[0].video.some((o) => o.id === "tilt")).toBe(false);
+});
+
+test("a start payload carrying distortion reaches the video sampler", async () => {
+  const { backends, video } = fakeBackends();
+  const route = routeForKind("video", backends);
+  await uniquifyRoute(
+    route,
+    "SOURCE",
+    { ...opts, distortion: true, distortionAxis: "both", distortionStrength: 1 },
+    1,
+    { seedBase: 1, nowMs: NOW, outputPath: (i) => outputName("clip", i, route) }
+  );
+  const tilt = video.rendered[0].video.find((o) => o.id === "tilt");
+  expect(Number(tilt?.params.h)).not.toBe(0);
+  expect(Number(tilt?.params.v)).not.toBe(0);
+});
+
+test("a still never carries the distortion fields into its options", async () => {
+  const { backends } = fakeBackends();
+  const real = routeForKind("photo", backends);
+  if (real.kind !== "photo") throw new Error("expected a photo route");
+  const seen: object[] = [];
+  const route: PhotoRoute = {
+    ...real,
+    sampleRecipe: (o, seed, intensity) => {
+      seen.push(o);
+      return real.sampleRecipe(o, seed, intensity);
+    },
+  };
+  await uniquifyRoute(
+    route,
+    "SOURCE",
+    { ...opts, distortion: true, distortionAxis: "both", distortionStrength: 1 },
+    1,
+    { seedBase: 1, nowMs: NOW, interThreshold: 0, outputPath: (i) => outputName("still", i, route) }
+  );
+  expect(seen.length).toBeGreaterThan(0);
+  for (const o of seen) {
+    expect(o).not.toHaveProperty("distortion");
+    expect(o).not.toHaveProperty("distortionAxis");
+    expect(o).not.toHaveProperty("distortionStrength");
+  }
 });

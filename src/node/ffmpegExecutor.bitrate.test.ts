@@ -67,6 +67,7 @@ test("rendered reel stays within the 12 Mbit/s ceiling and is no longer squeezed
   const opts: ResolvedCopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
     targetDistance: 60, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" },
+    distortion: false, distortionAxis: "h", distortionStrength: 0,
   };
   const out = join(dir, "out.mp4");
   await exec.render(input, info, sampleRecipe(opts, 42, 1), out);
@@ -85,6 +86,7 @@ test("the 12 Mbit/s ceiling binds on a source that would exceed it", async () =>
   const opts: ResolvedCopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
     targetDistance: 60, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" },
+    distortion: false, distortionAxis: "h", distortionStrength: 0,
   };
   const out = join(dir, "noisy-out.mp4");
   await exec.render(noisyInput, info, sampleRecipe(opts, 42, 1), out);

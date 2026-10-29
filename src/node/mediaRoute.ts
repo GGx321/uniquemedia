@@ -7,7 +7,7 @@ import { samplePhotoRecipe } from "../core/photo/sampler";
 import type { RenderExecutor } from "../core/executor";
 import { shouldPreserveEdges } from "../core/photo/edges";
 import { DEFAULT_FRAME_PACK_DIR, listFrameBackgrounds } from "./framePack";
-import { EDGE_MODES, EXPORT_FORMATS, FIRST_FRAME_MODES, IDENTITY_MODES } from "../core/types";
+import { EDGE_MODES, EXPORT_FORMATS, FIRST_FRAME_MODES, IDENTITY_MODES, TILT_AXES } from "../core/types";
 import type {
   EdgeMode,
   ExportFormat,
@@ -17,6 +17,7 @@ import type {
   Recipe,
   ResolvedCopyOptions,
   StartOptions,
+  TiltAxis,
   VerifyResult,
 } from "../core/types";
 import type {
@@ -186,6 +187,20 @@ export function resolveEdgeMode(requested: string | undefined, fallback: EdgeMod
 }
 
 /**
+ * Turns a `--distort-axis` argument into an axis. Same shape and the same
+ * reason as `resolveEdgeMode`: an unrecognised axis that reached the sampler
+ * would tilt neither way and the run would report success on an untouched copy.
+ */
+export function resolveTiltAxis(requested: string | undefined, fallback: TiltAxis): TiltAxis {
+  if (requested === undefined) return fallback;
+  const match = TILT_AXES.find((a) => a === requested);
+  if (match === undefined) {
+    throw new Error(`Unknown --distort-axis ${requested}. Expected one of: ${TILT_AXES.join(", ")}.`);
+  }
+  return match;
+}
+
+/**
  * Turns an `--identity` argument into an identity mode. Same shape and the
  * same reason as `resolveEdgeMode`: an unrecognised mode that reached the
  * graph would simply not be `iphone` and would ship as `engine`, with the
@@ -347,6 +362,9 @@ export async function uniquifyRoute(
       firstFrame: _firstFrame,
       coverPath: _coverPath,
       frame: _frame,
+      distortion: _distortion,
+      distortionAxis: _distortionAxis,
+      distortionStrength: _distortionStrength,
       ...rest
     } = opts;
     const photoOpts: ResolvedPhotoOptions = {
@@ -365,6 +383,9 @@ export async function uniquifyRoute(
   const videoOpts: ResolvedCopyOptions = {
     ...rest,
     keepTrendAudio: opts.keepTrendAudio ?? false,
+    distortion: opts.distortion ?? false,
+    distortionAxis: opts.distortionAxis ?? "h",
+    distortionStrength: opts.distortionStrength ?? 0,
     firstFrame: await resolveFirstFrame(route, opts),
     ...(frame
       ? { frame: { backgrounds: await listFrameBackgrounds(config.framePackDir ?? DEFAULT_FRAME_PACK_DIR) } }

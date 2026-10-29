@@ -1,6 +1,6 @@
 import { useId } from "react";
-import { EDGE_MODES, FIRST_FRAME_MODES, IDENTITY_MODES } from "../../core/types";
-import type { EdgeMode, FirstFrameMode, IdentityMode, MediaKind } from "../../core/types";
+import { EDGE_MODES, FIRST_FRAME_MODES, IDENTITY_MODES, TILT_AXES } from "../../core/types";
+import type { EdgeMode, FirstFrameMode, IdentityMode, MediaKind, TiltAxis } from "../../core/types";
 import type { CoverPick } from "../../../electron/ipc";
 import { basename } from "../util";
 
@@ -23,6 +23,12 @@ export interface AdvancedValue {
    *  carries. Only meaningful for a video in `iphone` mode; off by default, and
    *  the row that sets it is shown only then. */
   capcutMark: boolean;
+  /** «Искажение»: a slight perspective tilt of the picture. Video only. */
+  distortion: boolean;
+  /** Which axis the tilt is about; only meaningful while `distortion` is on. */
+  distortionAxis: TiltAxis;
+  /** How hard the tilt is, 0..1; only meaningful while `distortion` is on. */
+  distortionStrength: number;
 }
 
 /** Reading the answer back as one of the three modes rather than casting the
@@ -56,6 +62,27 @@ const FIRST_FRAME_LABELS: Record<FirstFrameMode, string> = {
   black: "Чёрный",
   photo: "Фото",
 };
+
+/** «Ось наклона»: the tilt is about the vertical axis, the horizontal one, or both. */
+const TILT_AXIS_LABELS: Record<TiltAxis, string> = {
+  h: "Горизонталь",
+  v: "Вертикаль",
+  both: "Оба",
+};
+
+/** The preview's tilt, a pure function of the settings so it follows the slider
+ *  live. One axis tilts up to 18 degrees; «Оба» splits that to 12 per axis so
+ *  the combined lean stays comparable. `scale` keeps the leaning frame inside
+ *  its container. */
+function tiltTransform(axis: TiltAxis, strength: number): string {
+  const single = Math.round(strength * 18 * 100) / 100;
+  const each = Math.round(strength * 12 * 100) / 100;
+  const rotations =
+    axis === "h" ? `rotateY(${single}deg)`
+    : axis === "v" ? `rotateX(${single}deg)`
+    : `rotateX(${each}deg) rotateY(${each}deg)`;
+  return `perspective(800px) ${rotations} scale(.9)`;
+}
 
 /** A segmented control in the identity row's register: a radiogroup of
  *  buttons, labelled by the text beside it. */
@@ -202,12 +229,65 @@ function IdentityRow({
   );
 }
 
+/**
+ * The distortion controls under the toggle: the axis, the strength, and a
+ * preview of the source's frame leaning by that much. The preview is
+ * decorative (`aria-hidden`) — the slider's percentage is the accessible value.
+ */
+function DistortionRow({
+  axis,
+  strength,
+  poster,
+  onAxis,
+  onStrength,
+}: {
+  axis: TiltAxis;
+  strength: number;
+  poster: string | null;
+  onAxis: (axis: TiltAxis) => void;
+  onStrength: (strength: number) => void;
+}) {
+  const labelId = useId();
+  return (
+    <>
+      <div className="adv-row adv-row-static">
+        <span className="adv-label">
+          <span id={labelId}>Ось наклона</span>
+        </span>
+        <Segmented labelId={labelId} modes={TILT_AXES} labels={TILT_AXIS_LABELS} value={axis} onChange={onAxis} />
+      </div>
+      <label className="field">
+        <span className="adv-slider-head">
+          <span className="micro-label">Сила наклона</span>
+          <span className="val">{Math.round(strength * 100)}%</span>
+        </span>
+        <input
+          aria-label="Сила наклона"
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={strength}
+          onChange={(e) => onStrength(Number(e.target.value))}
+          style={{ ["--pct" as string]: `${strength * 100}%` }}
+        />
+      </label>
+      <div className="tilt-preview" aria-hidden="true">
+        <div className="tilt-preview-frame" style={{ transform: tiltTransform(axis, strength) }}>
+          {poster ? <img src={poster} alt="" /> : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function AdvancedPanel({
   kind,
   value,
   onChange,
   onPickCover,
   pickCoverDisabled = false,
+  poster = null,
 }: {
   /** A still has no soundtrack, so the audio row is not shown for one. The kind
    *  is required rather than optional so that every call site has to say which
@@ -222,6 +302,9 @@ export function AdvancedPanel({
    *  error channel as a failed batch, and the renderer's handler for that
    *  channel ends the batch on screen while ffmpeg keeps going. */
   pickCoverDisabled?: boolean;
+  /** A frame of the source video (a data URL) for the distortion preview;
+   *  null until there is a video, or when its frame could not be read. */
+  poster?: string | null;
 }) {
   const set = (patch: Partial<AdvancedValue>) => onChange({ ...value, ...patch });
   const pct = ((value.strength - 0.5) / 1.0) * 100;
@@ -294,6 +377,27 @@ export function AdvancedPanel({
               onChange={(e) => set({ frame: e.target.checked })}
             />
           </label>
+        )}
+        {kind !== "photo" && (
+          <label className="adv-row">
+            Искажение
+            <input
+              className="switch"
+              aria-label="Искажение"
+              type="checkbox"
+              checked={value.distortion}
+              onChange={(e) => set({ distortion: e.target.checked })}
+            />
+          </label>
+        )}
+        {kind !== "photo" && value.distortion && (
+          <DistortionRow
+            axis={value.distortionAxis}
+            strength={value.distortionStrength}
+            poster={poster}
+            onAxis={(distortionAxis) => set({ distortionAxis })}
+            onStrength={(distortionStrength) => set({ distortionStrength })}
+          />
         )}
         {edgesApply && (
           <label className="adv-row">

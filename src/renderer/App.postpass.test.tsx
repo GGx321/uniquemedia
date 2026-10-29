@@ -28,6 +28,7 @@ const fakeApi: Api = {
   pickFile: async () => "/in/still.jpg",
   pickCover: async () => null,
   getDroppedPath: () => "",
+  posterFrame: async () => null,
   probe: async () => photoInfo,
   chooseOutDir: async () => "/out",
   start: async () => {},

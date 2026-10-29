@@ -42,6 +42,7 @@ test("rendered copy is CFR at the recipe fps with intact, in-sync audio", () => 
       strength: 1, exportFormat: "original", keepTrendAudio: false,
       allowMirror: false, targetDistance: 60, identity: "engine", edgeMode: "auto",
       firstFrame: { mode: "off" },
+      distortion: false, distortionAxis: "h", distortionStrength: 0,
     };
     const recipe = sampleRecipe(opts, 42, 1);
     const enc = recipe.video.find((o) => o.id === "encode")!.params;

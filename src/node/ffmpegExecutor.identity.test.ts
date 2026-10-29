@@ -40,6 +40,9 @@ const baseOpts: Omit<ResolvedCopyOptions, "identity"> = {
   allowMirror: false,
   targetDistance: 90,
   edgeMode: "auto",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
 };
 

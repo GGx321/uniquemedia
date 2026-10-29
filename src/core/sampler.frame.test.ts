@@ -12,6 +12,9 @@ const base: ResolvedCopyOptions = {
   targetDistance: 38,
   identity: "engine",
   edgeMode: "auto",
+  distortion: false,
+  distortionAxis: "h",
+  distortionStrength: 0,
   firstFrame: { mode: "off" },
 };
 const on: ResolvedCopyOptions = { ...base, frame: { backgrounds: PACK } };

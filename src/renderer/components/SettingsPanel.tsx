@@ -35,6 +35,10 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
     // Video only: the CapCut mark is a MOV-container key, so it rides with the
     // video options, not the photo ones (like `keepTrendAudio` above).
     capcutMark: s.advanced.capcutMark,
+    // Video only as well: the tilt is a video filter.
+    distortion: s.advanced.distortion,
+    distortionAxis: s.advanced.distortionAxis,
+    distortionStrength: s.advanced.distortionStrength,
   };
 }
 
@@ -59,6 +63,7 @@ export function SettingsPanel({
   onRun,
   onStop,
   onPickCover,
+  poster = null,
 }: {
   source: Source | null;
   state: SettingsState;
@@ -71,6 +76,8 @@ export function SettingsPanel({
   onStop: () => void;
   /** Opens the host's image dialog for the photo first frame. */
   onPickCover: () => void;
+  /** A frame of the source video for the distortion preview. */
+  poster?: string | null;
 }) {
   const set = (patch: Partial<SettingsState>) => onChange({ ...state, ...patch });
   return (
@@ -88,6 +95,7 @@ export function SettingsPanel({
         onChange={(advanced) => set({ advanced })}
         onPickCover={onPickCover}
         pickCoverDisabled={running}
+        poster={poster}
       />
       <RunButton
         disabled={!source || coverMissing(source, state)}

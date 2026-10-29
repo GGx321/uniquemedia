@@ -6,6 +6,7 @@ import {
   COVER_FILTERS,
   PICKER_FILTERS,
   pickCoverForHost,
+  posterFrameForHost,
   probeForHost,
   runBatchForHost,
   type StartRequest,
@@ -66,6 +67,7 @@ ipcMain.handle(CH.probe, (_e, path: string) =>
   probeForHost(path, backends, (message) => send(CH.evtError, { message }))
 );
 
+ipcMain.handle(CH.posterFrame, (_e, path: string) => posterFrameForHost(path, backends));
 ipcMain.handle(CH.chooseOutDir, async () => {
   const r = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
   return r.canceled ? null : r.filePaths[0];

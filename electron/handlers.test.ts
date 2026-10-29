@@ -8,6 +8,7 @@ import {
   PICKER_FILTERS,
   VIDEO_EXTENSIONS,
   pickCoverForHost,
+  posterFrameForHost,
   probeForHost,
   runBatchForHost,
   type BatchHost,
@@ -433,4 +434,47 @@ test("a framed batch with no pack reports the folder instead of rendering", asyn
   expect(recipes).toEqual([]);
   const error = sent.find((s) => s.channel === CH.evtError);
   expect(JSON.stringify(error?.payload)).toContain(missing);
+});
+
+// ── the poster frame behind the distortion preview ─────────────────────────
+
+test("a video's poster frame is the thumbnail its own backend extracts", async () => {
+  const clip = join(dir, "poster.mp4");
+  makeTestClip(clip);
+  const backends: Backends = {
+    video: new BatchStub(videoInfo, () => frameOfDistance(5)),
+    photo: new BatchStub(photoInfo, () => frameOfDistance(5)),
+  };
+
+  expect(await posterFrameForHost(clip, backends)).toBe("thumb-1");
+});
+
+test("a still has no poster frame", async () => {
+  const still = join(dir, "poster.jpg");
+  makeTestPhoto(still);
+
+  expect(await posterFrameForHost(still, stubBackends())).toBeNull();
+});
+
+test("a backend failure yields null instead of throwing", async () => {
+  const clip = join(dir, "poster-fail.mp4");
+  makeTestClip(clip);
+  class Failing extends StubBackend<unknown> {
+    async extractThumbnail(): Promise<string> {
+      throw new Error("ffmpeg exited 1");
+    }
+  }
+  const backends: Backends = {
+    video: new Failing(videoInfo),
+    photo: new StubBackend(photoInfo),
+  };
+
+  expect(await posterFrameForHost(clip, backends)).toBeNull();
+});
+
+test("an unreadable file yields a null poster frame", async () => {
+  const heif = join(dir, "poster.heic");
+  makeTestHeif(heif);
+
+  expect(await posterFrameForHost(heif, stubBackends())).toBeNull();
 });

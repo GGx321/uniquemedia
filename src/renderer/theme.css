@@ -877,6 +877,37 @@ input[type="range"]:active::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* ── «Искажение»: live preview of the tilt ── */
+/* A dark stage clipping a framed card that leans in perspective; the
+   transform is set inline from the axis and strength. */
+.tilt-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b0b0e;
+}
+.tilt-preview-frame {
+  width: 68px;
+  height: 100px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.9);
+  transition: transform 0.15s var(--ease);
+}
+.tilt-preview-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* ── the cover row under «Первый кадр: Фото» ── */
 /* The picked picture on the left — a framed thumbnail in the source chip's
    register, or the empty-state line — and the pick button on the right where
