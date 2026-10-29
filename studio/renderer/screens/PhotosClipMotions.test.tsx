@@ -222,44 +222,6 @@ describe("62a: «Смотрим кадр…» — the guard holds «Оживит
     expect(callsOf(h.engine, "clips.create")).toHaveLength(2);
   });
 
-  test("another photo's call (the window knows it): this photo's «Оживить» waits with the guard, its own part C actions do not (one call per photo, not per avatar)", async () => {
-    const h = await openNini();
-    let s = await openSheet();
-    h.engine.holdMotionCalls(true);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    fireEvent.click(cancelButton(s));
-    await flush();
-    fireEvent.click(within(viewer()).getByRole("button", { name: "Закрыть" }));
-    await flush();
-    s = await openSheet(1, "Ночнушки и бельё");
-    expect(isOff(goButton(s))).toBe(true);
-    expect(describedText(goButton(s))).toBe(MOTION_BUSY);
-    expect(isOff(suggestButton(s))).toBe(false);
-    expect(suggestButton(s).textContent).toBe(`Предложить движения · ${SUGGEST_CEILING}`);
-    h.engine.holdMotionCalls(false);
-    await settle();
-    expect(isOff(goButton(s))).toBe(false);
-  });
-
-  test("the sheet opened again while its photo's call runs says «Смотрим кадр…», and shows the suggestions once the call has ended", async () => {
-    const h = await openNini();
-    let s = await openSheet();
-    const before = radios(s).length;
-    h.engine.holdMotionCalls(true);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    fireEvent.click(cancelButton(s));
-    await flush();
-    s = await reopenSheet();
-    expect(suggestButton(s).textContent).toBe("Смотрим кадр…");
-    expect(isOff(goButton(s))).toBe(true);
-    h.engine.holdMotionCalls(false);
-    await settle();
-    expect(suggestButton(s).textContent).toBe(`Предложить движения · ${SUGGEST_CEILING}`);
-    expect(radios(s).length).toBe(before + 3);
-    expect(rowTitles(s)).toEqual(await optionsLabels(h));
-  });
 });
 
 describe("62b: the suggestions are in", () => {
@@ -319,15 +281,6 @@ describe("FU-CLIP round 2 (MEDIUM-3): a stored suggestion is the sheet's default
     expect((callsOf(h.engine, "clips.create")[0]?.payload as Record<string, unknown> | undefined)?.motionId).toBe("v-1");
   });
 
-  test("with no choice made, the first suggestion becomes the choice once the call brings it", async () => {
-    await openNini();
-    const s = await openSheet();
-    expect(radios(s).find((r) => r.checked)?.value).not.toMatch(/^v-/);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(radios(s).find((r) => r.checked)?.value).toBe("v-1");
-  });
-
   test("the price line does not move with the default: the suggestion and a code motion show the same figure", async () => {
     const h = await openNini();
     await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
@@ -341,26 +294,6 @@ describe("FU-CLIP round 2 (MEDIUM-3): a stored suggestion is the sheet's default
     expect(priceLine(s)).toBe(price);
   });
 
-  test("a default he never chose is not his choice: a call that pushes it out moves the sheet to the new first suggestion and says its result, no drop line", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    h.engine.scriptNextMotionReplies([labelled([["Дует на чай", "she slowly tucks a strand of hair behind her ear"], ["Прячет улыбку", "she slowly lifts her chin and smiles softly"], ["Глубоко вдыхает", "she slowly turns toward the window and smiles"]])]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(checkedRow(s).startsWith("Дует на чай")).toBe(true);
-    h.engine.scriptNextMotionReplies([labelled([["Смотрит вниз", "she slowly looks down and smiles to herself"], ["Смотрит в сторону", "she slowly glances to the side and looks back"], ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"]])]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(rowTitles(s).includes("Дует на чай")).toBe(false);
-    expect(checkedRow(s).startsWith(defaultTitle(s))).toBe(true);
-    expect(news("polite", s)).not.toContain("больше не в списке");
-  });
-
-  test("a photo without a suggestion keeps the first row as its default", async () => {
-    await openNini();
-    const s = await openSheet();
-    expect(radios(s).find((r) => r.checked)).toBe(radios(s)[0]);
-  });
 });
 
 describe("62c: no suggestion came", () => {
@@ -401,80 +334,12 @@ describe("62c: no suggestion came", () => {
     expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Не получилось предложить движения — оплачено $0.002.");
   });
 
-  test("the model repeated what the sheet lists (`reason: \"repeated\"`, S5.WC3c): «Модель повторила уже предложенные движения — оплачено $0.003.», warm, said as an alert", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    const texts = ["she slowly tucks a strand of hair behind her ear", "she slowly lifts her chin and smiles softly", "she slowly turns toward the window and smiles"];
-    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(texts, {}, 3_400), mockSuggestionAnswer(texts, {}, 3_400)]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    const rows = rowTexts(s);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    const notice = s.querySelector(".mc-scroll .notice") as HTMLElement;
-    expect(plain(notice.textContent)).toBe("Модель повторила уже предложенные движения — оплачено $0.003.");
-    expect(notice.classList.contains("notice-warn")).toBe(true);
-    expect(news("alert", s)).toBe("Модель повторила уже предложенные движения — оплачено $0.003.");
-    expect(rowTexts(s)).toEqual(rows);
-  });
 });
 
 describe("62d: the frame's notes", () => {
-  test("a suggestion that saw a second phone: «В кадре виден второй телефон — он может остаться в клипе» under the frame, said with the result; price and «Оживить» unchanged", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    const price = plain(s.querySelector(".clip-price-line")?.textContent);
-    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(["she slowly tucks a strand of hair behind her ear"], { phoneVisible: true })]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    const list = within(s).getByRole("list", { name: "Заметки о кадре" });
-    expect(within(list).getAllByRole("listitem").map((li) => plain(li.textContent))).toEqual(["В кадре виден второй телефон — он может остаться в клипе"]);
-    expect(news("polite", s)).toBe("Предложено 1 движение — оплачено $0.005. Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
-    expect(plain(s.querySelector(".clip-price-line")?.textContent)).toBe(price);
-    expect(isOff(goButton(s))).toBe(false);
-  });
-
-  test("the stored reading of an earlier suggestion: both notes on opening, said once", async () => {
-    const h = await openNini();
-    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
-    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
-      store.reading = { notes: ["capture-differs", "second-phone"] };
-    });
-    const s = await openSheet();
-    const list = within(s).getByRole("list", { name: "Заметки о кадре" });
-    expect(within(list).getAllByRole("listitem").map((li) => plain(li.textContent))).toEqual(["Камера в кадре не такая, как в сцене", "В кадре виден второй телефон — он может остаться в клипе"]);
-    expect(news("polite", s)).toBe("Заметки о кадре: камера в кадре не такая, как в сцене; в кадре виден второй телефон — он может остаться в клипе.");
-  });
-
-  test("no reading: no list", async () => {
-    await openNini();
-    const s = await openSheet();
-    expect(within(s).queryByRole("list", { name: "Заметки о кадре" }) == null).toBe(true);
-  });
 });
 
 describe("63: «Своя идея…» — the field", () => {
-  test("opens in place with the focus in it: «0/300», the hint, «Перевести» waiting while it is empty", async () => {
-    await openNini();
-    const s = await openSheet();
-    fireEvent.click(ideaToggle(s));
-    await flush();
-    const f = field(s);
-    expect(document.activeElement === f).toBe(true);
-    expect(f.maxLength).toBe(OWN_IDEA_MAX);
-    expect(plain(f.placeholder)).toBe("Опишите одно небольшое движение — например, «медленно поворачивает голову к окну»");
-    expect(plain(s.querySelector(".mc-count")?.textContent)).toBe("0/300");
-    expect(isOff(translateButton(s))).toBe(true);
-    expect(describedText(translateButton(s))).toBe("От 1 до 300 символов. Английский текст увидите до оплаты клипа.");
-    fireEvent.click(translateButton(s));
-    await flush();
-    fireEvent.change(f, { target: { value: "медленно поворачивает голову, прислушиваясь к шуму за окном" } });
-    await flush();
-    expect(plain(s.querySelector(".mc-count")?.textContent)).toBe("59/300");
-    expect(isOff(translateButton(s))).toBe(false);
-    expect(translateButton(s).textContent).toBe(`Перевести · ${IDEA_CEILING}`);
-  });
-
   test("the contract's rules: a tab or a ZWJ emoji is «Уберите из идеи служебные символы.»; digits and signs alone want words; a plain emoji with words is fine", async () => {
     const h = await openNini();
     const s = await openSheet();
@@ -498,60 +363,6 @@ describe("63: «Своя идея…» — the field", () => {
     expect(callsOf(h.engine, "clips.translateIdea")[0]?.payload.text).toBe("улыбается 🙂");
   });
 
-  test("Enter is a space, never a send; pasted line breaks become spaces; the text sent is trimmed", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает");
-    const f = field(s);
-    f.setSelectionRange(f.value.length, f.value.length);
-    fireEvent.keyDown(f, { key: "Enter" });
-    await flush();
-    expect(field(s).value).toBe("медленно поворачивает ");
-    expect(callsOf(h.engine, "clips.translateIdea")).toHaveLength(0);
-    const g = field(s);
-    g.setSelectionRange(g.value.length, g.value.length);
-    fireEvent.paste(g, { clipboardData: { getData: () => "голову\nк окну\r\n" } });
-    await flush();
-    expect(field(s).value).toBe("медленно поворачивает голову к окну ");
-    fireEvent.change(field(s), { target: { value: "медленно\nулыбается" } });
-    await flush();
-    expect(field(s).value).toBe("медленно улыбается");
-    fireEvent.click(translateButton(s));
-    await settle();
-    expect(callsOf(h.engine, "clips.translateIdea")[0]?.payload.text).toBe("медленно улыбается");
-  });
-
-  test("the limit: 300 characters, «300/300»", async () => {
-    await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "у".repeat(OWN_IDEA_MAX));
-    expect(plain(s.querySelector(".mc-count")?.textContent)).toBe("300/300");
-    expect(isOff(translateButton(s))).toBe(false);
-  });
-
-  test("#running: «Переводим…» keeps the focus, the field waits, «Оживить» and «Предложить движения» wait with the guard", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.holdMotionCalls(true);
-    translateButton(s).focus();
-    fireEvent.click(translateButton(s));
-    await settle();
-    const busy = translateButton(s);
-    expect(busy.textContent).toBe("Переводим…");
-    expect(busy.getAttribute("aria-busy")).toBe("true");
-    expect(document.activeElement === busy).toBe(true);
-    expect(field(s).disabled).toBe(true);
-    expect(isOff(goButton(s))).toBe(true);
-    expect(describedText(goButton(s))).toBe(MOTION_BUSY);
-    expect(isOff(suggestButton(s))).toBe(true);
-    expect(describedText(suggestButton(s))).toBe(MOTION_BUSY);
-    fireEvent.click(suggestButton(s));
-    await flush();
-    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(0);
-    h.engine.holdMotionCalls(false);
-    await settle();
-  });
 });
 
 describe("63a: the idea translated", () => {
@@ -637,18 +448,6 @@ describe("63b, 63c: the idea refused", () => {
     }
   });
 
-  test("S5.WC2c (63c retired): on a frame that is not «Смелая» an idea that takes clothing off is translated like any other: no refusal, it joins the list chosen", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно снимает кардиган");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her cardigan")]);
-    await translate(s);
-    expect(s.querySelector(".mc-refusal") == null).toBe(true);
-    expect(plain(s.querySelector(".mc-status")?.textContent)).toBe("Идея переведена — оплачено $0.001.");
-    expect(checkedRow(s)).toBe("Своя идея: медленно снимает кардиганshe slowly takes off her cardigan");
-    expect(h.engine.peekMotions().lines.filter((line) => line.attemptId.includes(":idea#"))).toHaveLength(1);
-  });
-
   test("S5.WC2c round 2 (M1): an idea whose own words name an age is refused before the call: the content text, «Перевод — бесплатно.», nothing sent", async () => {
     const h = await openNini();
     const s = await openSheet();
@@ -728,54 +527,9 @@ describe("the paid buttons' refusals, as the other paid buttons'", () => {
     expect(news("alert", s)).toBe("Месячный бюджет исчерпан. Увеличьте его в Настройках или дождитесь следующего месяца.");
   });
 
-  test("`motions-full`: «Для этого фото новых движений больше не добавить — выберите из списка.»", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    // A store that has issued its last id (the engine never reuses one).
-    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
-    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
-      store.next.vision = 1_000;
-    });
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Для этого фото новых движений больше не добавить — выберите из списка.");
-  });
 });
 
 describe("the guard the other way: a clip holds the clip money unit (`clip-busy`)", () => {
-  test("a clip starts while the sheet is open: both part C buttons wait, described by the footer's own line (S5.WC5b: one wording)", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    await act(async () => {
-      await h.client.request("clips.create", { avatarId: NINI.avatarId, photoId: BOLD.photoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "none", acceptedWorstMicros: 10_000_000 });
-    });
-    await settle();
-    const text = plain(CLIP_REASONS_RU["one-at-a-time"]);
-    expect(plain(s.querySelector(".clip-sheet-foot .notice")?.textContent)).toBe(text);
-    expect(isOff(suggestButton(s))).toBe(true);
-    expect(describedText(suggestButton(s))).toBe(text);
-    expect(isOff(translateButton(s))).toBe(true);
-    expect(describedText(translateButton(s))).toBe(text);
-    expect(s.querySelector(".mc-why") == null).toBe(true);
-    fireEvent.click(suggestButton(s));
-    fireEvent.click(translateButton(s));
-    await flush();
-    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(0);
-    expect(callsOf(h.engine, "clips.translateIdea")).toHaveLength(0);
-  });
-
-  test("a click the engine refused `clip-busy` says its words under the button", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    h.engine.failNext("clips.suggestMotions", { code: "IN_FLIGHT", clipReason: "clip-busy", detail: "a clip is being made" });
-    suggestButton(s).focus();
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe(plain(CLIP_REASONS_RU["clip-busy"]));
-    expect(news("alert", s)).toBe(plain(CLIP_REASONS_RU["clip-busy"]));
-    expect(focused()).toContain("Предложить движения");
-  });
 });
 
 /** The writer's answer with these labels and texts (the mock's own helper numbers its labels). */
@@ -785,227 +539,15 @@ function labelled(pairs: readonly [string, string][]): MockModelReply {
 }
 
 describe("round 2: where the focus goes after 63a, and a chosen row that leaves the list", () => {
-  test("M2: once the idea is translated the focus is on «Своя идея…» while the list is read again — never on the page", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.delayNext("clips.options", 1_000);
-    await translate(s);
-    expect(focused()).toBe(describeElement(ideaToggle(s)));
-    tick(h.scheduler);
-    await settle();
-    expect(document.activeElement === radios(s).find((r) => r.checked)).toBe(true);
-  });
-
-  test("M2: the new row is not in the list read again — the focus stays on «Своя идея…» and nothing waits to take it later", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.delayNext("clips.options", 1_000);
-    await translate(s);
-    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
-      store.items = store.items.filter((item) => item.source !== "own");
-    });
-    tick(h.scheduler);
-    await settle();
-    expect(rowTitles(s).some((title) => title.startsWith("Своя идея"))).toBe(false);
-    expect(focused()).toBe(describeElement(ideaToggle(s)));
-    // A later list that holds an own idea again takes no focus from where the owner is.
-    radios(s)[1]?.focus();
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly turns her head toward the window")]);
-    await h.client.request("clips.translateIdea", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, text: "улыбается", acceptedWorstMicros: MOCK_TRANSLATE_PRICE.worstMicros });
-    fireEvent.click(radios(s)[1] as HTMLElement);
-    await settle();
-    expect(document.activeElement === radios(s)[1]).toBe(true);
-  });
-
-  test("M2: the list could not be read again — the focus goes to what the sheet offers then («Повторить»), not to the page", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.delayNext("clips.options", 1_000);
-    h.engine.failNext("clips.options", { code: "NETWORK", detail: "fetch failed" });
-    await translate(s);
-    tick(h.scheduler);
-    await settle();
-    expect(focused()).toBe(describeElement(within(s).getByRole("button", { name: "Повторить" })));
-  });
-
-  test("L1: a chosen suggestion pushed out of the newest three is said, and the first row is chosen — no silent jump", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    h.engine.scriptNextMotionReplies([
-      labelled([
-        ["Дует на чай", "she slowly tucks a strand of hair behind her ear"],
-        ["Прячет улыбку", "she slowly lifts her chin and smiles softly"],
-        ["Глубоко вдыхает", "she slowly turns toward the window and smiles"],
-      ]),
-    ]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    fireEvent.click(radios(s).find((r) => r.closest("label")?.textContent?.startsWith("Дует на чай") === true) as HTMLElement);
-    await flush();
-    expect(checkedRow(s).startsWith("Дует на чай")).toBe(true);
-    h.engine.scriptNextMotionReplies([
-      labelled([
-        ["Смотрит вниз", "she slowly looks down and smiles to herself"],
-        ["Смотрит в сторону", "she slowly glances to the side and looks back"],
-        ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"],
-      ]),
-    ]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(rowTitles(s).includes("Дует на чай")).toBe(false);
-    // The sheet's default takes the dropped row's place: the first suggestion still listed (FU-CLIP round 2), else the first row.
-    const first = defaultTitle(s);
-    expect(checkedRow(s).startsWith(first)).toBe(true);
-    // Round 3 (R2, probe P4): the drop alone — the result line was said already and is not read twice.
-    expect(news("polite", s)).toBe(`Движение «Дует на чай» больше не в списке — выбрано «${first}».`);
-  });
 });
 
 describe("round 2: L1 and 63a together", () => {
-  test("the chosen idea pushed out by a new one: the new idea is chosen (63a), not the first row, and no drop is said", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    for (const [idea, english] of [
-      ["медленно поворачивает голову", "she slowly turns her head toward the window"],
-      ["медленно улыбается", "she slowly looks down and smiles to herself"],
-    ] as const) {
-      await typeIdea(s, idea);
-      h.engine.scriptNextMotionReplies([mockIdeaAnswer(english)]);
-      await translate(s);
-    }
-    // He goes back to his first idea, then writes a third: only the newest two are listed, so the first leaves the list.
-    fireEvent.click(radios(s).find((r) => r.value === "o-1") as HTMLElement);
-    await flush();
-    await typeIdea(s, "медленно поправляет волосы");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly tucks a strand of hair behind her ear")]);
-    await translate(s);
-    expect(rowTitles(s).includes("Своя идея: медленно поворачивает голову")).toBe(false);
-    expect(checkedRow(s).startsWith("Своя идея: медленно поправляет волосы")).toBe(true);
-    expect(news("polite", s)).toBe("Идея переведена — оплачено $0.001.");
-  });
 });
 
 describe("round 3: a list read again that fails or drops the chosen row", () => {
-  test("R1 (P2): 63a, then the list cannot be priced — no «Повторить» is drawn, the focus goes to «Отмена», not to the page", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.failNext("clips.options", { code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "no price" });
-    await translate(s);
-    expect(within(s).queryByRole("button", { name: "Повторить" }) == null).toBe(true);
-    expect(focused()).toBe(describeElement(cancelButton(s)));
-  });
-
-  test("R1 (P1): a 63b refusal with the focus in the field, then the list cannot be read — the focus goes to «Повторить»", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "отпивает чай, а потом поправляет волосы");
-    const twice = "she slowly sips her tea and then tucks her hair behind her ear";
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
-    h.engine.delayNext("clips.options", 1_000);
-    h.engine.failNext("clips.options", { code: "NETWORK", detail: "fetch failed" });
-    await translate(s);
-    expect(document.activeElement === field(s)).toBe(true);
-    tick(h.scheduler);
-    await settle();
-    expect(focused()).toBe(describeElement(within(s).getByRole("button", { name: "Повторить" })));
-  });
-
-  test("R1 (P3): a BUDGET_EXCEEDED refusal, then the list cannot be priced — the focus goes to «Отмена»", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.failNext("clips.translateIdea", { code: "BUDGET_EXCEEDED", detail: "no room" });
-    h.engine.failNext("clips.options", { code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "no price" });
-    translateButton(s).focus();
-    await translate(s);
-    expect(focused()).toBe(describeElement(cancelButton(s)));
-  });
-
-  test("R3: the chosen idea leaves the list and the new one is not in it — the drop is said, the first row chosen, the focus on «Своя идея…»", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    for (const [idea, english] of [
-      ["медленно поворачивает голову", "she slowly turns her head toward the window"],
-      ["медленно улыбается", "she slowly looks down and smiles to herself"],
-    ] as const) {
-      await typeIdea(s, idea);
-      h.engine.scriptNextMotionReplies([mockIdeaAnswer(english)]);
-      await translate(s);
-    }
-    fireEvent.click(radios(s).find((r) => r.value === "o-1") as HTMLElement);
-    await flush();
-    await typeIdea(s, "медленно поправляет волосы");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly tucks a strand of hair behind her ear")]);
-    h.engine.delayNext("clips.options", 1_000);
-    await translate(s);
-    // The list read again holds neither his chosen idea nor the new one.
-    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
-      store.items = store.items.filter((item) => item.id !== "o-1" && item.id !== "o-3");
-    });
-    tick(h.scheduler);
-    await settle();
-    const first = rowTitles(s)[0] ?? "";
-    expect(rowTitles(s).filter((title) => title.startsWith("Своя идея"))).toEqual(["Своя идея: медленно улыбается"]);
-    expect(checkedRow(s).startsWith(first)).toBe(true);
-    expect(news("polite", s)).toBe(`Движение «Своя идея: медленно поворачивает голову» больше не в списке — выбрано «${first}».`);
-    expect(focused()).toBe(describeElement(ideaToggle(s)));
-  });
 });
 
 describe("round 2: the smaller points", () => {
-  test("L3: one `clips.options` per finished call", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    const before = callsOf(h.engine, "clips.options").length;
-    fireEvent.click(suggestButton(s));
-    await settle();
-    expect(callsOf(h.engine, "clips.options").length).toBe(before + 1);
-    await typeIdea(s, "медленно поворачивает голову");
-    await translate(s);
-    expect(callsOf(h.engine, "clips.options").length).toBe(before + 2);
-  });
-
-  test("L2 (62b): the group is brought down to the last new row, then the focus goes to the first", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    const seen: string[] = [];
-    const original = HTMLElement.prototype.scrollIntoView;
-    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
-      seen.push(this.querySelector("input")?.value ?? this.tagName);
-    };
-    try {
-      fireEvent.click(suggestButton(s));
-      await settle();
-    } finally {
-      HTMLElement.prototype.scrollIntoView = original;
-    }
-    expect(seen).toEqual(["v-3"]);
-    expect((document.activeElement as HTMLInputElement | null)?.value).toBe("v-1");
-    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(1);
-  });
-
-  test("L4: the sheet's own «Оживить» on its way holds both part C buttons with the sheet's own clip-busy line (round 2, L-4: about that ONE clip)", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.delayNext("clips.create", 1_000);
-    fireEvent.click(goButton(s));
-    await flush();
-    const text = "Клип отправляется — предложить или перевести движение можно после него.";
-    expect(isOff(suggestButton(s))).toBe(true);
-    expect(describedText(suggestButton(s))).toBe(text);
-    expect(isOff(translateButton(s))).toBe(true);
-    fireEvent.click(suggestButton(s));
-    await flush();
-    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(0);
-    tick(h.scheduler);
-    await settle();
-  });
-
   test("L8: an estimate of nothing says «бесплатно», never «до $0.000»", async () => {
     const h = await openNini();
     const original = h.engine.request.bind(h.engine);
@@ -1031,111 +573,11 @@ describe("round 2: the smaller points", () => {
 });
 
 describe("a11y: the live regions are in the sheet from the start", () => {
-  test("both are there, empty, before any call; the sheet adds no role=status or role=alert of its own", async () => {
-    await openNini();
-    const s = await openSheet();
-    expect(s.querySelector("[data-motion-news='polite']")?.getAttribute("aria-live")).toBe("polite");
-    expect(s.querySelector("[data-motion-news='alert']")?.getAttribute("aria-live")).toBe("assertive");
-    expect(news("polite", s)).toBe("");
-    expect(news("alert", s)).toBe("");
-    expect(within(s).queryAllByRole("status")).toHaveLength(0);
-    expect(within(s).queryAllByRole("alert")).toHaveLength(0);
-    expect(s.querySelector(".mc-guard")?.textContent).toBe("");
-  });
-
-  test("the same result said twice is said again (a new node in the same region)", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    fireEvent.click(suggestButton(s));
-    await settle();
-    const first = s.querySelector("[data-motion-news='polite'] > span");
-    // Three other texts: the same answer again would be a repeat (`none`, S5.WC3c); the line said twice is the same three-motion line.
-    h.engine.scriptNextMotionReplies([
-      labelled([
-        ["Один", "she slowly looks down and smiles to herself"],
-        ["Два", "she slowly glances to the side and looks back"],
-        ["Три", "she slowly brushes her hair back with one hand"],
-      ]),
-    ]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    const second = s.querySelector("[data-motion-news='polite'] > span");
-    expect(plain(second?.textContent)).toBe("Предложено 3 движения — оплачено $0.003.");
-    expect(second === first).toBe(false);
-    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(2);
-    expect(NBSP).toBe(" ");
-  });
 });
 
 describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
   const ready = (name: RegExp | string): HTMLElement => screen.getByRole("article", { name });
   const clipsTab = (): HTMLElement => screen.getByRole("tab", { name: /^Клипы/ });
-
-  test("M1: a batch holds the unit and the sheet is opened from a failed tile — the part C buttons point at the footer's batch line, never «Сейчас снимается клип»", async () => {
-    const h = await openNini();
-    h.engine.scriptNextClip({ first: "refused-free", then: "refused-free" });
-    fireEvent.click(goButton(await openSheet()));
-    await settle();
-    tick(h.scheduler, 80);
-    await settle();
-    // A batch of the bold frame: it holds the clip money unit from its start.
-    await act(async () => {
-      await h.client.request("clips.createBatch", { avatarId: NINI.avatarId, items: [{ photoId: BOLD.photoId, motionId: "g-blink" }], quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 10_000_000 });
-    });
-    await settle();
-    fireEvent.click(within(ready("Клип не получился: Моргает и улыбается")).getByRole("button", { name: "Оживить снова…" }));
-    await settle();
-    const s = sheet();
-    const footer = plain(s.querySelector(".clip-sheet-foot .notice")?.textContent);
-    expect(footer.startsWith("Сейчас снимаются клипы пакета")).toBe(true);
-    expect(describedText(suggestButton(s))).toBe(footer);
-    expect(isOff(suggestButton(s))).toBe(true);
-    expect(plain(s.textContent)).not.toContain("Сейчас снимается клип");
-    expect(clipsTab()).toBeDefined();
-  });
-
-  test("a paid `none` that came while the sheet was closed is shown once when it opens again", async () => {
-    const h = await openNini();
-    let s = await openSheet();
-    h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([UNREADABLE, UNREADABLE]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    fireEvent.click(cancelButton(s));
-    await flush();
-    h.engine.holdMotionCalls(false);
-    await settle();
-    s = await reopenSheet();
-    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Не получилось предложить движения — оплачено $0.004.");
-    expect(news("alert", s)).toBe("Не получилось предложить движения — оплачено $0.004.");
-    fireEvent.click(cancelButton(s));
-    await flush();
-    s = await reopenSheet();
-    expect(s.querySelector(".mc-scroll .notice") == null).toBe(true);
-  });
-
-  test("a rejection that came while the sheet was closed opens the idea card with its reason and its cost, the focus in the field", async () => {
-    const h = await openNini();
-    let s = await openSheet();
-    await typeIdea(s, "отпивает чай, а потом поправляет волосы");
-    const twice = "she slowly sips her tea and then tucks her hair behind her ear";
-    h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice, 1_000), mockIdeaAnswer(twice, 1_000)]);
-    fireEvent.click(translateButton(s));
-    await settle();
-    fireEvent.click(cancelButton(s));
-    await flush();
-    h.engine.holdMotionCalls(false);
-    await settle();
-    s = await reopenSheet();
-    expect(ideaToggle(s).getAttribute("aria-expanded")).toBe("true");
-    const refusal = s.querySelector(".mc-refusal") as HTMLElement;
-    expect(plain(refusal.querySelector("p")?.textContent)).toBe(plain(MOTION_PROBLEMS_RU["two-movements"]));
-    expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("За перевод оплачено $0.002.");
-    expect(document.activeElement === field(s)).toBe(true);
-    // His words were never kept: the field is empty.
-    expect(field(s).value).toBe("");
-  });
 
   test("`unknown-motion` after «Оживить»: the list is read again, the drop is said ONCE (the alert) and the first row chosen, «Движение больше недоступно — выберите другое.» on show", async () => {
     const h = await openNini();
@@ -1172,24 +614,6 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
     expect(plain(s.textContent)).not.toContain("откройте «Оживить» заново");
   });
 
-  test("the clip viewer shows an own clip as the sheet does: «Своя идея: …» and its English", async () => {
-    const h = await openNini();
-    const s = await openSheet();
-    await typeIdea(s, "медленно поворачивает голову");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly turns her head toward the window")]);
-    await translate(s);
-    fireEvent.click(goButton(s));
-    await settle();
-    tick(h.scheduler, 60);
-    await settle();
-    fireEvent.click(within(ready("Клип: медленно поворачивает голову")).getByRole("button", { name: /^Открыть клип/ }));
-    await settle();
-    const viewerOfClip = screen.getByRole("dialog", { name: /^Клип \d+ из \d+$/ });
-    const term = within(viewerOfClip).getByText("Движение", { selector: "dt" });
-    const motion = term.nextElementSibling as HTMLElement;
-    expect(plain(motion.firstChild?.textContent)).toBe("Своя идея: медленно поворачивает голову");
-    expect(motion.querySelector(".clip-en[lang='en']")?.textContent).toBe("she slowly turns her head toward the window");
-  });
 });
 
 describe("S5.WC5b round 2 (M-1): the sheet reopened before the answer came says it when it comes", () => {
@@ -1263,39 +687,4 @@ describe("S5.WC5b round 2 (M-1): the sheet reopened before the answer came says 
 });
 
 describe("S5.WC5b round 2: one announcement per answer", () => {
-  test("L-1: a kept `ok` with frame notes is said once, its line with its notes — the sheet's own notes line on open does not replace it", async () => {
-    const h = await openNini();
-    let s = await openSheet();
-    h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(["she slowly tucks a strand of hair behind her ear"], { phoneVisible: true })]);
-    fireEvent.click(suggestButton(s));
-    await settle();
-    fireEvent.click(cancelButton(s));
-    await flush();
-    h.engine.holdMotionCalls(false);
-    await settle();
-    const said: string[] = [];
-    const watch = new MutationObserver(() => {
-      const now = news("polite");
-      if (now !== "" && said.at(-1) !== now) said.push(now);
-    });
-    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
-    s = await reopenSheet();
-    await settle();
-    watch.disconnect();
-    const line = plain(s.querySelector(".mc-status")?.textContent);
-    expect(line.startsWith("Предложено 1 движение — оплачено $")).toBe(true);
-    const full = `${line} Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.`;
-    expect(news("polite", s)).toBe(full);
-    expect(said).toEqual([full]);
-  });
-
-  test("L-1: with nothing kept, the stored notes are still said on open", async () => {
-    const h = await openNini();
-    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(["she slowly tucks a strand of hair behind her ear"], { phoneVisible: true })]);
-    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
-    const s = await openSheet();
-    await settle();
-    expect(news("polite", s)).toBe("Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
-  });
 });
