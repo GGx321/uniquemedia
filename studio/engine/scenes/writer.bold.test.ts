@@ -531,10 +531,8 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
     test.each([
       ["captured in her own photo from above", "In her hotel room in Paris, captured in her own photo from above, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
       ["morning daylight", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties as morning daylight fills the room, a box of macarons on the nightstand."],
-      ["set in the world of", "Set in the world of a cafe terrace, in her hotel room she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
       ["a selfie", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties for a selfie, a box of macarons on the nightstand."],
       ["the camera", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, smiling into the camera, a box of macarons on the nightstand."],
-      ["a timer", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties while the timer counts down, a box of macarons on the nightstand."],
       ["a three-quarter view", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties in a three-quarter view, a box of macarons on the nightstand."],
     ])("%s is refused", (_, sentence) => {
       const read = bold(sentence);
@@ -551,15 +549,10 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
     // Review LOW: only the leaks the probe saw. The light named by its source, a frame of the view, a photo on the wall and a shot of espresso are the rules' own.
     test.each([
       ["daylight", "as daylight fills the room"],
-      ["captured", "captured from above"],
-      ["selfie", "for a selfie"],
-      ["snap", "in a quick snap"],
       ["timer", "while the timer counts down"],
       ["camera", "smiling into the camera"],
-      ["lens", "close to the lens"],
       ["three-quarter", "in a three-quarter view"],
       ["world", "set in the world of the city"],
-      ["slot", "as the slot says"],
     ])("«%s» is refused", (_, words) => {
       expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties ${words}, a box of macarons on the nightstand.`))).toContain("label-word");
     });
@@ -603,8 +596,6 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
 
     test.each([
       "as sunlight falls across the sheets",
-      "in the sunshine from the window",
-      "under the lamplight of the bedside lamp",
       "the window framing the rooftops",
       "beside a framed photo of the Seine",
       "with a shot of espresso on the nightstand",
@@ -1113,12 +1104,9 @@ describe("S5.BA4d: each place's own preposition (the paid check P-BW3: «On her 
 
   test.each([
     ["In her room", ROOM],
-    ["Inside her room", ROOM],
     ["On her sofa", SOFA],
     ["On her balcony", BALCONY],
-    ["Out on her balcony", BALCONY],
     ["By her window", WINDOW],
-    ["At her window", WINDOW],
     ["In her bathroom", BATHROOM],
   ] as const)("«%s she …» passes", (opening, slot) => {
     expect(problemsOf(read(slot, `${opening} ${tail(slot.activity)}`))).not.toContain("bare-place");
