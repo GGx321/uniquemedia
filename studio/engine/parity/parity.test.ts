@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { heavyTest, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useEngineDir } from "../testing/engineHarness";
 import { openLibrary } from "../library";
@@ -10,8 +11,9 @@ import { GOLDEN } from "./testing/golden";
 import { goldenSource } from "./testing/goldenFile";
 import { play } from "./testing/play";
 import { servedProblems, unservedAnswers } from "./testing/pending";
+import { planParity } from "./testing/pushSet";
 import { mockRig, realRig } from "./testing/rigs";
-import { SCENARIOS } from "./testing/scenarios";
+import { SCENARIOS, type Scenario } from "./testing/scenarios";
 import { INTENTIONAL_DIFFERENCES, MASKED } from "./testing/transcript";
 useNativeGlobals();
 
@@ -20,7 +22,9 @@ useNativeGlobals();
 // transcript each scenario is bound to, so a change that moves BOTH engines the same way is still seen. What differs on
 // purpose is in transcript.ts (`MASKED`, `INTENTIONAL_DIFFERENCES`) and nowhere else.
 //
-// PARITY_WRITE_GOLDEN=1 rewrites golden.ts from the transcripts (after requiring the two engines to agree): see golden.ts.
+// PARITY_WRITE_GOLDEN=1 rewrites golden.ts from the transcripts (after requiring the two engines to agree): see golden.ts. Run it with STUDIO_TEST_TIER=heavy, the run that plays every story.
+//
+// A push plays one story of every family of commands, the money, recovery and «Смелая» ones among them; the heavy (nightly) run plays all of them (testing/pushSet.ts, parity.plan.test.ts).
 
 const dir = useEngineDir("studio-parity-");
 const REAL_TIMEOUT_MS = 60_000;
@@ -28,37 +32,42 @@ const WRITE_GOLDEN = process.env.PARITY_WRITE_GOLDEN === "1";
 const written: Record<string, string[]> = {};
 
 afterAll(() => {
+  if (WRITE_GOLDEN && Object.keys(written).length !== SCENARIOS.length) throw new Error(`PARITY_WRITE_GOLDEN needs every story: run it with STUDIO_TEST_TIER=heavy (${Object.keys(written).length} of ${SCENARIOS.length} played)`);
   if (WRITE_GOLDEN) writeFileSync(new URL("./testing/golden.ts", import.meta.url), goldenSource(written));
 });
 
-describe("mock and engine agree", () => {
-  for (const scenario of SCENARIOS) {
-    test(
-      scenario.name,
-      async () => {
-        const mock = await play(mockRig(scenario.rig), scenario);
-        // S4.10 fix D: a RETIRED story is replaced by stories both engines play (`Scenario.retired`); only the mock's transcript stays bound, to the golden below.
-        if (scenario.retired !== undefined) {
-          if (WRITE_GOLDEN) written[scenario.name] = mock;
-          else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
-          return;
-        }
-        const real = await play(await realRig(dir(), scenario.rig), scenario);
+async function agree(scenario: Scenario): Promise<void> {
+  const mock = await play(mockRig(scenario.rig), scenario);
+  // S4.10 fix D: a RETIRED story is replaced by stories both engines play (`Scenario.retired`); only the mock's transcript stays bound, to the golden below.
+  if (scenario.retired !== undefined) {
+    if (WRITE_GOLDEN) written[scenario.name] = mock;
+    else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
+    return;
+  }
+  const real = await play(await realRig(dir(), scenario.rig), scenario);
 
-        // Stage 4 (S4.1): a story whose commands the real engine does not serve yet is PENDING. It cannot match line for line, so the real engine is held to its one refusal
-        // for the commands the story names (testing/pending.ts); the mock's transcript is still bound to the golden below.
-        // S4.6a: the commands it already serves (`served`) are held to the opposite, until the mock is complete (S4.8) and the story can match line for line.
-        if (scenario.pending === undefined) expect(real).toEqual(mock);
-        else {
-          const served = scenario.pending.served ?? [];
-          expect(unservedAnswers(real, scenario.pending.commands.filter((c) => !served.includes(c)))).toEqual([]);
-          expect(servedProblems(real, served)).toEqual([]);
-        }
-        if (WRITE_GOLDEN) written[scenario.name] = mock;
-        else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
-      },
-      REAL_TIMEOUT_MS,
-    );
+  // Stage 4 (S4.1): a story whose commands the real engine does not serve yet is PENDING. It cannot match line for line, so the real engine is held to its one refusal
+  // for the commands the story names (testing/pending.ts); the mock's transcript is still bound to the golden below.
+  // S4.6a: the commands it already serves (`served`) are held to the opposite, until the mock is complete (S4.8) and the story can match line for line.
+  if (scenario.pending === undefined) expect(real).toEqual(mock);
+  else {
+    const served = scenario.pending.served ?? [];
+    expect(unservedAnswers(real, scenario.pending.commands.filter((c) => !served.includes(c)))).toEqual([]);
+    expect(servedProblems(real, served)).toEqual([]);
+  }
+  if (WRITE_GOLDEN) written[scenario.name] = mock;
+  else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
+}
+
+const BY_NAME = new Map(SCENARIOS.map((scenario) => [scenario.name, scenario]));
+
+describe("mock and engine agree", () => {
+  for (const entry of planParity(SCENARIOS.map((s) => s.name))) {
+    const scenario = BY_NAME.get(entry.name);
+    if (scenario === undefined) throw new Error(`no scenario named ${entry.name}`);
+    // A push plays the story under its plain name and the heavy run plays it again under `[heavy]`; a story only the heavy run plays is registered once.
+    if (entry.registration === "sweep") sweepTest(scenario.name, { push: scenario, heavy: scenario }, agree, REAL_TIMEOUT_MS);
+    else heavyTest(scenario.name, () => agree(scenario), REAL_TIMEOUT_MS);
   }
 });
 
