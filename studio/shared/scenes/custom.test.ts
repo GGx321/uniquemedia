@@ -286,27 +286,35 @@ describe("a redraw of a slot with nothing to vary still reads differently from t
 describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
   test.each<[string, string]>([
     ["a hotel pool", "pool"],
+    ["an infinity pool at the villa", "pool"],
     ["the shore of the lake", "shore"],
     ["the sundeck of a sailing yacht", "sundeck"],
     ["a yacht at anchor in a bay", "yacht"],
     ["a cabin below deck", "cabin"],
     ["a kitchen island", "island"],
     ["a pool table", "table"],
+    ["a cafe with a sea view", "cafe"],
+    ["a surf shop", "shop"],
+    ["a beach bar", "bar"],
+    ["a marina at sunset", "marina"],
+    ["a terrace overlooking the sea", "terrace"],
     ["a room facing the ocean", "room"],
+    ["a bench beneath the pier", "bench"],
     ["a villa above the lagoon", "villa"],
+    ["a hut beyond the dunes", "hut"],
     ["Poolside.", "poolside"],
   ])("the head noun of «%s» is %s", (name, head) => {
     expect(waterHeadNoun(name)).toBe(head);
   });
 
-  test.each(["a hotel pool", "the sundeck of a sailing yacht", "poolside", "a lagoon at dawn", "secluded beaches"].map((n) => [n]))(
+  test.each(["a hotel pool", "an infinity pool at the villa", "the shore of the lake", "the sundeck of a sailing yacht", "a yacht at anchor in a bay", "a quiet beach", "poolside", "a lagoon at dawn", "the ocean", "secluded beaches", "the hotel pools", "two quiet lakes", "rocky shores", "blue lagoons", "private yachts", "the seas", "sundecks at noon"].map((n) => [n]))(
     "«%s» is a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(true);
     },
   );
 
-  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a cabin below deck", "pool tables"].map((n) => [n]))(
+  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "pool tables", "beach bars", "kitchen islands", "a seaside walk", "a sea cave by the sea"].map((n) => [n]))(
     "«%s» is not a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(false);
