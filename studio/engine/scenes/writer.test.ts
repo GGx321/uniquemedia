@@ -520,6 +520,8 @@ describe("detectors", () => {
     ["She takes a mirror selfie, her hands neatly manicured, holding the phone with her other hand and smiling softly.", false],
     // Review round 1 (LOW/MEDIUM): past tense and typing/texting/carrying were missing.
     ["Her hands adjusted the strap of her bag before she smiled for the mirror.", true],
+    ["her hands held the railing tightly as she posed", true],
+    ["her hands carried the tray steadily", true],
     ["She glances at the screen, her hands typing quickly on the counter.", true],
   ])("isTwoHanded(%j) -> %p", (sentence, expected) => {
     expect(isTwoHanded(sentence)).toBe(expected);
