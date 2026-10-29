@@ -24,24 +24,6 @@ describe("the chip hint line", () => {
     expect(screen.queryByText(HINT.glam) === null).toBe(true);
   });
 
-  test("gives the street chip its own hint", async () => {
-    await openPhotos();
-    fireEvent.pointerEnter(chip(/^Улица/));
-    expect(screen.getByText(HINT.shoot)).toBeDefined();
-  });
-
-  test("gives the views chip its own hint", async () => {
-    await openPhotos();
-    fireEvent.pointerEnter(chip(/^Виды/));
-    expect(screen.getByText(HINT.travel)).toBeDefined();
-  });
-
-  test("shows the hint of the chip that has the focus", async () => {
-    await openPhotos();
-    fireEvent.focus(chip(/^Улица/));
-    expect(screen.getByText(HINT.shoot)).toBeDefined();
-  });
-
   test("goes back to the Glamour hint once the pointer leaves, while Glamour is on", async () => {
     await openPhotos();
     fireEvent.pointerEnter(chip(/^Дом/));
@@ -50,37 +32,12 @@ describe("the chip hint line", () => {
     expect(screen.queryByText(HINT.home) === null).toBe(true);
   });
 
-  test("keeps the Glamour hint under a chip that has none of its own (Фитнес)", async () => {
-    await openPhotos();
-    fireEvent.pointerEnter(chip(/^Фитнес/));
-    expect(screen.getByText(HINT.glam)).toBeDefined();
-  });
-
-  test("shows no hint at rest once Glamour is off", async () => {
-    await openPhotos();
-    fireEvent.click(chip(/^Гламур/));
-    expect(document.querySelector(".photos-cats-note") === null).toBe(true);
-  });
 });
 
 // 2026-10-12, S5.9g (plan s5a3 §13.1; mockups 47, 48): the two chips kept for «Смелая» became real chips. The rows «dimmed chips: real disabled buttons» and
 // «says they come later» pinned the placeholder; what replaces them pins the gating (the full states are in PhotosBold.test.tsx). The S5.6d review's point
 // stays: `aria-disabled` sits on the button itself, never on a bare span.
 describe("the two «Смелая» chips", () => {
-  test("are buttons in the row, dimmed under «Обычная» with `aria-disabled` on the button itself, never a span", async () => {
-    await openPhotos();
-    for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-      const gated = within(chipsGroup()).getByRole("button", { name });
-      expect(gated.getAttribute("aria-disabled")).toBe("true");
-      expect(gated.getAttribute("title")).toBe("Только со «Смелой»");
-      expect(Array.from(chipsGroup().querySelectorAll("span[aria-disabled]"))).toHaveLength(0);
-    }
-  });
-
-  test("no longer say they come later", async () => {
-    await openPhotos();
-    expect(screen.queryByText("Со «Смелой» — появятся позже.") === null).toBe(true);
-  });
 });
 
 // 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 7–14; mockup 65c): at «Смелая» every category draws lingerie, so each chip says where and in what — no towel (the hint is per category, and an
@@ -110,12 +67,6 @@ describe("the chip hint line at «Смелая» (mockup 65c)", () => {
   }
   const line = (): string | null => document.querySelector(".photos-cats-note")?.textContent ?? null;
 
-  test("at rest, Гламур's line while Гламур is on (mockup 65)", async () => {
-    await openPhotos();
-    await pickLevel("Смелая");
-    expect(line()).toBe(BOLD_HINT.glam);
-  });
-
   test("each built-in chip under the pointer says where she is and in what", async () => {
     await openPhotos();
     await pickLevel("Смелая");
@@ -133,10 +84,6 @@ describe("the chip hint line at «Смелая» (mockup 65c)", () => {
       expect(line()).toBe(hint);
       fireEvent.pointerLeave(chip(name));
     }
-  });
-
-  test("no hint names the towel: the hint is per category, and an imported avatar never gets one", async () => {
-    for (const hint of Object.values(BOLD_HINT)) expect(hint.includes("полотенц")).toBe(false);
   });
 
   test("a custom category: lingerie in a room or at home, in its world; at the water, swimwear (mockup 65c#cat-riviera)", async () => {

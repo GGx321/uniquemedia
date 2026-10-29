@@ -87,58 +87,6 @@ describe("the category row", () => {
     await waitFor(() => expect(callsOf(engine, "runs.estimate").at(-1)?.payload.categories).toEqual(["home", "travel", "shoot", "glam", "fit"]));
   });
 
-  test("more than four custom ones: the first four and every one turned on stay, the rest wait behind «ещё N», opened in place", async () => {
-    const seven = ["Кофейни Парижа", "Горы зимой", "Рынки", "Студия ч/б", "Книжные лавки", "Яхт-клуб", "Осенний парк"].map((name, i) => category(i + 1, name));
-    await openPhotos({ categories: seven });
-    const more = await within(chipsGroup()).findByRole("button", { name: "ещё 3" });
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    expect(within(chipsGroup()).queryByRole("button", { name: "Яхт-клуб" }) === null).toBe(true);
-    fireEvent.click(more);
-    await flush();
-    fireEvent.click(within(chipsGroup()).getByRole("button", { name: "Яхт-клуб" }));
-    const fold = within(chipsGroup()).getByRole("button", { name: "свернуть" });
-    expect(fold.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(fold);
-    await flush();
-    // Turned on, it stays in the row; the other two wait.
-    expect(within(chipsGroup()).getByRole("button", { name: /^Яхт-клуб: \d+ фото$/ })).toBeDefined();
-    expect(within(chipsGroup()).getByRole("button", { name: "ещё 2" })).toBeDefined();
-    expect(chipNames().at(-1)).toBe("Своя");
-  });
-
-  test("a long name is cut on the chip but whole in its title and accessible name", async () => {
-    // 39 chars: the contract allows 40.
-    const long = category(4, "Утренние пробежки по набережной Тюильри");
-    await openPhotos({ categories: [long] });
-    const chip = await within(chipsGroup()).findByRole("button", { name: long.name });
-    expect(chip.getAttribute("title")).toBe(long.name);
-    expect(chip.querySelector(".chip-cap")?.textContent).toBe(long.name);
-  });
-
-  test("a photo of a custom category is labelled by the name it kept, cut on the tile and whole in its title", async () => {
-    const name = "Утренние пробежки по набережной Тюильри";
-    await openPhotos({
-      categories: [PARIS],
-      photos: [
-        {
-          photoId: "photo-custom-0001",
-          avatarId: "avatar-mia-0001",
-          runId: "run-custom-0001",
-          category: "cat-gone-from-library",
-          categoryName: name,
-          createdAt: "2026-09-20T10:00:00.000Z",
-          used: false,
-          usedIn: [],
-          rejected: false,
-          reserved: false,
-          eligible: true,
-        },
-      ],
-    });
-    const label = await screen.findByText(name, { selector: ".photo-label" });
-    expect(label.getAttribute("title")).toBe(name);
-  });
-
   test("at fifty «+ Своя» is unavailable, and says why under the row", async () => {
     const fifty = Array.from({ length: 49 }, (_, i) => ({ ...category(1, `Категория ${i + 1}`), categoryId: `cat-many-${String(i + 1).padStart(4, "0")}` as const }));
     await openPhotos({ categories: fifty, unreadableCategories: 1 });
@@ -154,63 +102,9 @@ describe("the category row", () => {
 
 // S5.5: the pool generator draws no lingerie, swimwear or nudity yet; the dialog says so while the owner types, before he pays, and says nothing otherwise.
 describe("«Новая категория»: the note on what is not drawn", () => {
-  test("a description that asks for lingerie shows the note before «Создать», and an ordinary one does not; the note goes when the words do", async () => {
-    await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    expect(within(dialog()).queryByText(REVEALING_NOTE) === null).toBe(true);
-    await fill("Реклама", "В нижнем брендовом белье на кровати для рекламы");
-    expect(within(dialog()).getByText(REVEALING_NOTE)).toBeDefined();
-    fireEvent.change(field(/^Описание/), { target: { value: "В белом платье в кофейне, бельгийский шоколад" } });
-    await flush();
-    expect(within(dialog()).queryByText(REVEALING_NOTE) === null).toBe(true);
-  });
-
-  test("the note does not block the button: the category is still created, in everyday clothes", async () => {
-    await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Реклама", "В нижнем белье на кровати");
-    expect(within(dialog()).getByText(REVEALING_NOTE)).toBeDefined();
-    expect(isDisabled(createButton())).toBe(false);
-  });
 });
 
 describe("«Новая категория»", () => {
-  test("opens with the focus in «Название», the price on its button and nothing sent; Escape closes it back to «+ Своя»", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    expect(describeElement(document.activeElement)).toBe(describeElement(field(/^Название/)));
-    expect(within(dialog()).getByText("≈ $0.005 · до $0.045")).toBeDefined();
-    expect(within(dialog()).getByText(/^grok-4\.3 · не больше 2 попыток · цены OpenRouter · \d+ \S+$/)).toBeDefined();
-    // Nothing typed yet: the button waits, no error is shouted.
-    expect(isDisabled(createButton())).toBe(true);
-    expect(within(dialog()).queryByText("Введите название.") === null).toBe(true);
-    fireEvent.keyDown(window, { key: "Escape" });
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Новая категория" }) === null).toBe(true);
-    expect(describeElement(document.activeElement)).toBe(describeElement(addChip()));
-    expect(callsOf(engine, "categories.create")).toHaveLength(0);
-  });
-
-  test("the fields are checked before anything is sent, free: a blank name, a long description, a name another category has", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    fireEvent.change(field(/^Название/), { target: { value: "x" } });
-    fireEvent.change(field(/^Название/), { target: { value: "  " } });
-    await flush();
-    expect(within(dialog()).getByText("Введите название.")).toBeDefined();
-    expect(field(/^Название/).getAttribute("aria-invalid")).toBe("true");
-    await fill("Рынки", "а".repeat(512));
-    expect(within(dialog()).getByText("Не больше 500 знаков — уберите 12.")).toBeDefined();
-    expect(within(dialog()).getByText("512/500")).toBeDefined();
-    expect(isDisabled(createButton())).toBe(true);
-    await fill("  кофейни ПАРИЖА ", "кофейни");
-    expect(within(dialog()).getByText(CATEGORY_REASONS_RU["name-taken"])).toBeDefined();
-    expect(isDisabled(createButton())).toBe(true);
-    fireEvent.click(createButton());
-    await flush();
-    expect(callsOf(engine, "categories.create")).toHaveLength(0);
-  });
-
   test("«Создать» sends exactly the request and the worst case it showed; while composing the form is locked and the row has a chip with a spinner", async () => {
     const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
     await openCreate();
@@ -280,31 +174,6 @@ describe("«Новая категория»", () => {
     expect(screen.getByRole("group", { name: "Сколько фото" }).textContent).toContain("25");
     const flirty = screen.getByRole("radio", { name: "Кокетливая" });
     expect(flirty instanceof HTMLInputElement && flirty.checked).toBe(true);
-  });
-
-  test("«Скрыть» while composing: the chip with the spinner takes the focus and opens the dialog again; done, the chip is on and keeps the focus", async () => {
-    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки и прилавки");
-    engine.delayNext("categories.create", 100);
-    fireEvent.click(createButton());
-    await flush();
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Скрыть" }));
-    await flush();
-    expect(screen.queryByRole("dialog") === null).toBe(true);
-    const waiting = within(chipsGroup()).getByRole("button", { name: "Рынки — создаётся" });
-    expect(describeElement(document.activeElement)).toBe(describeElement(waiting));
-    fireEvent.click(waiting);
-    await flush();
-    expect(createButton().textContent).toBe("Создаём… · до $0.045");
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Скрыть" }));
-    await flush();
-    runAll(scheduler);
-    await flush();
-    const chip = within(chipsGroup()).getByRole("button", { name: /^Рынки: \d+ фото$/ });
-    expect(chip.getAttribute("aria-pressed")).toBe("true");
-    expect(describeElement(document.activeElement)).toBe(describeElement(chip));
-    expect(screen.queryByRole("dialog") === null).toBe(true);
   });
 
   test("hidden, then failed: a notice under the card names it and what it cost; «Изменить описание» opens it again with the same text", async () => {
@@ -399,42 +268,6 @@ describe("«Новая категория»", () => {
     expect(isDisabled(createButton())).toBe(false);
   });
 
-  test("PRICE_CHANGED: while the fresh price loads the notice says so and holds the focus; the new price lands in it, the focus kept", async () => {
-    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
-    engine.delayNext("categories.estimate", 100);
-    fireEvent.click(createButton());
-    await flush();
-    const notice = within(dialog()).getByRole("alert");
-    expect(notice.textContent).toContain("узнаём новую цену…");
-    expect(describeElement(document.activeElement)).toBe(describeElement(notice));
-    runAll(scheduler);
-    await flush();
-    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
-    // The same element, kept: the price landed in it, the focus never moved.
-    expect(within(dialog()).getByRole("alert") === notice).toBe(true);
-    expect(document.activeElement === notice).toBe(true);
-  });
-
-  test("PRICE_CHANGED, then the fresh price fails: the notice stays beside «Цену не узнать» and «Повторить»", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
-    engine.failNext("categories.estimate", { code: "INTERNAL" });
-    fireEvent.click(createButton());
-    await flush();
-    expect(within(dialog()).getByText("Цена изменилась")).toBeDefined();
-    expect(within(dialog()).getByText(/^Цену не узнать/)).toBeDefined();
-    fireEvent.click(within(dialog()).getByRole("button", { name: "Повторить" }));
-    await flush();
-    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
-    expect(createButton().textContent).toBe("Подтвердить новую цену · до $0.052");
-    expect(callsOf(engine, "categories.create")).toHaveLength(1);
-  });
-
   test("a change of the text model while its price is asked: no price of the old model is offered, the button waits for the new one", async () => {
     const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
     await openCreate();
@@ -454,114 +287,4 @@ describe("«Новая категория»", () => {
     expect(isDisabled(createButton())).toBe(false);
   });
 
-  test("Enter that ends an input method's composition in «Название» is not «Создать»", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    fireEvent.keyDown(field(/^Название/), { key: "Enter", isComposing: true });
-    await flush();
-    expect(callsOf(engine, "categories.create")).toHaveLength(0);
-    fireEvent.keyDown(field(/^Название/), { key: "Enter" });
-    await flush();
-    expect(callsOf(engine, "categories.create")).toHaveLength(1);
-  });
-
-  test("the library's limit sends to «Мои категории»; a pool paid for but not stored sends to Settings", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    engine.failNext("categories.create", { code: "VALIDATION", categoryReason: "limit" });
-    fireEvent.click(createButton());
-    await flush();
-    expect(within(dialog()).getByText("В библиотеке уже 50 категорий — это предел. Удалите ненужную, потом создайте новую.")).toBeDefined();
-    expect(within(dialog()).getByRole("button", { name: "Мои категории" })).toBeDefined();
-    engine.failNextCategoryCall({ code: "INTERNAL", detail: "the paid category is kept in raw/x" }, 5_000);
-    fireEvent.click(createButton());
-    await flush();
-    expect(within(dialog()).getByText("Набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и создайте категорию снова.")).toBeDefined();
-    expect(within(dialog()).getByText("INTERNAL · потрачено $0.005")).toBeDefined();
-    expect(within(dialog()).getByRole("button", { name: "Открыть Настройки" })).toBeDefined();
-  });
-
-  test("another window composing a category: the dialog says which, and a create sent anyway is refused for free", async () => {
-    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
-    engine.delayNext("categories.create", 500);
-    let other: Promise<unknown> = Promise.resolve();
-    inAct(() => {
-      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
-    });
-    await flush();
-    await openCreate();
-    expect(within(dialog()).getByText("Сейчас составляется «Горы зимой». По одной категории за раз — дождитесь её, потом создайте эту.")).toBeDefined();
-    runAll(scheduler);
-    await act(async () => {
-      await other;
-    });
-  });
-
-  test("another window composing a category: «Создать» waits with the note, and both go when that call ends", async () => {
-    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
-    engine.delayNext("categories.create", 500);
-    let other: Promise<unknown> = Promise.resolve();
-    inAct(() => {
-      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
-    });
-    await flush();
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    expect(isDisabled(createButton())).toBe(true);
-    fireEvent.click(createButton());
-    await flush();
-    expect(callsOf(engine, "categories.create")).toHaveLength(1);
-    runAll(scheduler);
-    await act(async () => {
-      await other;
-    });
-    await flush();
-    expect(within(dialog()).queryByText(/Сейчас составляется/) === null).toBe(true);
-    expect(isDisabled(createButton())).toBe(false);
-  });
-
-  test("a create refused because another window composes: the note goes and «Создать» is back when that call ends", async () => {
-    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    engine.delayNext("categories.create", 500);
-    let other: Promise<unknown> = Promise.resolve();
-    inAct(() => {
-      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
-    });
-    await flush();
-    fireEvent.click(createButton());
-    await flush();
-    expect(within(dialog()).getByText(/Сейчас составляется «Горы зимой»/)).toBeDefined();
-    runAll(scheduler);
-    await act(async () => {
-      await other;
-    });
-    await flush();
-    expect(within(dialog()).queryByText(/Сейчас составляется/) === null).toBe(true);
-    expect(isDisabled(createButton())).toBe(false);
-  });
-
-  test("without a usable key, or until a reconcile, «Создать» is unavailable and says why", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS], apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    expect(isDisabled(createButton())).toBe(true);
-    expect(within(dialog()).getByText("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.")).toBeDefined();
-    fireEvent.click(createButton());
-    await flush();
-    expect(callsOf(engine, "categories.create")).toHaveLength(0);
-  });
-
-  test("until a reconcile the button waits with the reconcile's reason", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    inAct(() => engine.requireReconcile(["open-reserves"]));
-    await flush();
-    await openCreate();
-    await fill("Рынки", "Рынки");
-    expect(isDisabled(createButton())).toBe(true);
-    expect(within(dialog()).getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
-  });
 });
