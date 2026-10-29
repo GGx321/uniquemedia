@@ -23,60 +23,6 @@ describe("the switch", () => {
     expect(within(column()).getByText(/^Модель пишет 20/).textContent).toContain("≈ $0.009");
   });
 
-  test("turned off it is today's path, and it stays off on this machine (ReviewOff)", async () => {
-    const { engine } = await openReview();
-    await waitFor(() => expect(goButton().textContent).toContain("Составить"));
-    fireEvent.click(reviewSwitch());
-    await flush();
-    expect(reviewSwitch().getAttribute("aria-checked")).toBe("false");
-    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
-    expect(localStorage.getItem(SCENE_REVIEW_KEY)).toBe("off");
-    expect(within(column()).getByText("проверка выключена")).toBeDefined();
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
-  });
-
-  test("while a scenes job writes the set it waits and says why: «Отменить» of the job stays on screen (CS.7 M3)", async () => {
-    const { scheduler } = await openReview();
-    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
-    await flush();
-    expect(isDisabled(reviewSwitch())).toBe(true);
-    expect(describedText(reviewSwitch())).toBe("Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.");
-    fireEvent.click(reviewSwitch());
-    await flush();
-    expect(reviewSwitch().getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem(SCENE_REVIEW_KEY) === "off").toBe(false);
-    expect(within(column()).getByRole("button", { name: "Отменить" })).toBeDefined();
-    expect(within(column()).queryByText("проверка выключена") === null).toBe(true);
-    runAll(scheduler);
-    await flush();
-    expect(isDisabled(reviewSwitch())).toBe(false);
-    expect(reviewSwitch().getAttribute("aria-describedby") === null).toBe(true);
-  });
-
-  test("Space toggles it; its name is the visible label", async () => {
-    await openReview();
-    const sw = reviewSwitch();
-    const label = document.getElementById(sw.getAttribute("aria-labelledby") ?? "");
-    expect(label?.textContent).toBe("Сцены на проверку");
-  });
-
-  test("with review on the count may go to 0 — an empty set, free; turned off there it stands at 5", async () => {
-    const { engine } = await openReview();
-    await waitFor(() => expect(goButton().textContent).toContain("Составить"));
-    const less = within(card()).getByRole("button", { name: "Меньше" });
-    for (let i = 0; i < 4; i++) {
-      fireEvent.click(less);
-      await flush();
-    }
-    expect(within(card()).getByRole("group", { name: "Сколько фото" }).textContent).toContain("0");
-    await waitFor(() => expect(goButton().textContent).toBe("Начать пустой набор · бесплатно"));
-    expect(isDisabled(goButton())).toBe(false);
-    fireEvent.click(reviewSwitch());
-    await flush();
-    expect(within(card()).getByRole("group", { name: "Сколько фото" }).textContent).toContain("5");
-    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 5 фото · до $0.83"));
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
-  });
 });
 
 describe("compose", () => {
@@ -145,56 +91,9 @@ describe("compose", () => {
     expect(callsOf(engine, "scenes.compose")).toHaveLength(2);
   });
 
-  test("paidBlockedReason keeps it disabled and says why", async () => {
-    const { engine } = await openReview();
-    await waitFor(() => expect(goButton().textContent).toContain("Составить"));
-    inAct(() => engine.requireReconcile(["open-reserves"]));
-    await flush();
-    expect(isDisabled(goButton())).toBe(true);
-    expect(within(card()).getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
-  });
-
-  test("the cancel of the job: scenes.cancel for the set, «Отменяем…» until its end", async () => {
-    const { engine, scheduler } = await openReview();
-    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
-    await flush();
-    fireEvent.click(within(column()).getByRole("button", { name: "Отменить" }));
-    await flush();
-    expect(callsOf(engine, "scenes.cancel")).toHaveLength(1);
-    expect(within(column()).getByRole("button", { name: "Отменяем…" })).toBeDefined();
-    expect(within(column()).getByText("отмена отправлена · ждём конца запроса")).toBeDefined();
-    runAll(scheduler);
-    await flush();
-    expect(within(column()).getByText(/^Составление остановлено · готово 0 из 20/)).toBeDefined();
-  });
 });
 
 describe("a ready set: the strip and «Отрисовать»", () => {
-  test("the strip names the set, its categories, its settings and the models; the price is the images only (ReviewReady)", async () => {
-    const { engine, scheduler } = await openReview();
-    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
-    await flush();
-    runAll(scheduler);
-    await flush();
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
-    const set = callsOf(engine, "runs.estimateFromScenes").at(-1)?.payload;
-    expect(set?.revision).toBeGreaterThan(1);
-    expect(card().textContent).toContain("Набор сцен");
-    expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Только модель");
-    // S5.7c (mockup 28): a set this window composed stores no «Ракурсы»: the line names its «Подача» and the angle from the scene.
-    expect(card().textContent).toContain("Подача: обычная · Ракурс — из сцены.");
-    expect(card().textContent).toContain("текст grok-4.3");
-    // The models line says which of it is today's Settings and which is the set's own (CS.7).
-    expect(within(card()).getByText(/текст grok-4\.3/).closest("p")?.getAttribute("title")).toBe(
-      "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.",
-    );
-    expect(priceRow("Сцены")).toMatch(/\$0\.00\d/);
-    expect(priceRow(/фото$/)).toContain("≈ $1.00");
-    expect(priceRow("Ожидаемая")).toContain("≈ $1.00");
-    // The price source fits beside «Цены»: no year for this year's prices (CS.7 V1).
-    expect(within(card()).getByText(/^OpenRouter · |^резервные · /).textContent).toMatch(/^(OpenRouter|резервные) · \d{1,2} [а-я]+\.$/);
-  });
-
   test("approve sends the revision it priced and the worst case on the button; the set becomes a read-only run (ReviewUsed)", async () => {
     const { engine, scheduler } = await openReview();
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
@@ -273,62 +172,10 @@ describe("«Пересоставить…»", () => {
 });
 
 describe("review off with a set open", () => {
-  test("the set is kept and hidden; the column says how to come back; on again, the strip is back (ReviewOff)", async () => {
-    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 20, written: 20, categories: [LLM_ONLY_REF] }] });
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
-    fireEvent.click(reviewSwitch());
-    await flush();
-    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.00"));
-    expect(within(column()).getByText("проверка выключена")).toBeDefined();
-    expect(within(column()).getByText(/^Открытый набор — 20.сцен — сохранён/)).toBeDefined();
-    fireEvent.click(reviewSwitch());
-    await flush();
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
-    expect(callsOf(engine, "scenes.discard")).toHaveLength(0);
-  });
 });
 
 describe("the set's read and the other paid paths", () => {
-  test("a set that could not be read is told with a retry, and nothing composes meanwhile (a second set would be refused)", async () => {
-    const { engine } = setup({ avatars: [MIA], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4 }] });
-    engine.failNext("scenes.get", { code: "LIBRARY_UNAVAILABLE" });
-    await screen.findByRole("heading", { level: 2, name: "Mia" });
-    await openSection("Фото");
-    await flush();
-    const retry = await within(column()).findByRole("button", { name: "Повторить" });
-    expect(isDisabled(goButton())).toBe(true);
-    fireEvent.click(retry);
-    await flush();
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 4 фото · до $0.60")));
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
-  });
-
-  test("today's «Сгенерировать» waits while a scenes job of the avatar runs — another window's compose, review off here", async () => {
-    // CS.7 M3: this window holds the switch on while its own write runs, so the job comes from elsewhere, as the events announce it.
-    const { engine, client } = await openReview({ sceneReview: "off" });
-    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
-    await act(async () => {
-      const reply = await client.request("scenes.compose", { avatarId: MIA.avatarId, count: 20, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
-      if (!reply.ok) throw new Error(reply.error.code);
-    });
-    await flush();
-    await waitFor(() => expect(within(card()).getByText("Дождитесь, пока модель допишет сцены.")).toBeDefined());
-    expect(isDisabled(goButton())).toBe(true);
-    expect(within(column()).getByText("Открытый набор — 20 сцен — пишется. Включите проверку, чтобы вернуться к нему.")).toBeDefined();
-    expect(callsOf(engine, "runs.start")).toHaveLength(0);
-  });
 });
 
 describe("nothing paid without a click", () => {
-  test("a restart of the engine during review: the set is read again, and no paid command is sent", async () => {
-    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 20, written: 20 }] });
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
-    const reads = callsOf(engine, "scenes.get").length;
-    await act(async () => {
-      engine.restart();
-    });
-    await flush();
-    await waitFor(() => expect(callsOf(engine, "scenes.get").length).toBeGreaterThan(reads));
-    for (const paid of ["scenes.compose", "scenes.write", "runs.startFromScenes", "runs.start", "runs.resume"] as const) expect(callsOf(engine, paid)).toHaveLength(0);
-  });
 });

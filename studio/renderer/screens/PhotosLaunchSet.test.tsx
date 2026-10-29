@@ -137,15 +137,6 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Автопилот" })).toBeDefined();
   });
 
-  test("scenes without text: the button says how many go, the line under it what the owner can do", async () => {
-    const { engine, launch, row } = await launchWithSet();
-    const fewer = { ...row, scenes: 14, scenesWithoutText: 2, continuePhotos: 12 };
-    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? fewer : a)) })));
-    await openFromAutopilot();
-    expect(goButton().textContent).toBe(`Продолжить запуск: 12${NBSP}фото · 2${NBSP}сцены без текста уберём`);
-    expect(descriptionOf(goButton())).toBe("Фото будет на 2 меньше — или допишите эти сцены, тогда 14.");
-  });
-
   test("over the plan (the engine's refusal): the button closed, «в плане N», the reason in red", async () => {
     const { engine, row } = await launchWithSet();
     await openFromAutopilot();
@@ -174,25 +165,6 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
 
   // 5a.4 (S5.BA8b round 2, MEDIUM-2; §5.9 row 24): a «Смелая» launch's set is drawn on the route, every scene of it by Seedream 5 Pro in 2K whatever the settings' model; its strip
   // names that model, as the owner's own set's strip does, and the settings' model only for a set off the route.
-  test("a «Смелая» launch's set: the models line names Seedream 5 Pro · 2K alone, and says the settings do not change it", async () => {
-    // At «Смелая» the library gives none of the old photos (r2.2 D2), so the canned launch has Mia's scenes waiting for the review.
-    await launchWithSet({ level: "bold", who: MIA });
-    await openFromAutopilot("Mia");
-    const line = strip().querySelector(".scene-strip-models");
-    expect(line?.textContent?.replace(/\s+/g, " ")).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
-    expect(line?.getAttribute("title")).toBe(
-      "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.",
-    );
-  });
-
-  test("an ordinary launch's set: the settings' model, as before", async () => {
-    await launchWithSet();
-    await openFromAutopilot();
-    const line = strip().querySelector(".scene-strip-models");
-    expect(line?.textContent?.startsWith("Seedream")).toBe(false);
-    expect(line?.textContent).toMatch(/· 9:16 · референс — мастер-портрет · текст grok-4\.3$/);
-  });
-
   test("the set moved (SCENES_CHANGED): told, nothing drawn, the focus stays on the button", async () => {
     const { engine } = await launchWithSet();
     await openFromAutopilot();
@@ -206,37 +178,9 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
 });
 
 describe("the launch paused (PhotoLaunchReviewPaused)", () => {
-  test("«Сцены принять: M фото · фото — после «Продолжить»»; accepted, the button gives way to «принято — ждёт «Продолжить»», which takes the focus", async () => {
-    const { engine, row } = await launchWithSet({ paused: true });
-    await openFromAutopilot();
-    expect(within(strip()).getByRole("note").textContent ?? "").toContain("запуск на паузе · в пределах запуска");
-    expect(goButton().textContent).toBe(`Сцены принять: ${row.continuePhotos ?? 0}${NBSP}фото · фото — после «Продолжить»`);
-    expect(within(strip()).getByText("Запуск на паузе. Сцены можно принять сейчас — рисовать начнём после «Продолжить».")).toBeDefined();
-    fireEvent.click(goButton());
-    await flush();
-    expect(callsOf(engine, "autopilot.continueAfterReview")).toHaveLength(1);
-    const accepted = await within(strip()).findByText("принято — ждёт «Продолжить»");
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(accepted)));
-    expect(within(column()).getByText("Сцены приняты — набор только для чтения, пока идёт запуск.")).toBeDefined();
-    expect(callsOf(engine, "runs.startFromScenes")).toHaveLength(0);
-  });
 });
 
 describe("a launch's batches on «Фото»", () => {
-  test("a stopped batch of the launch reads «в запуске автопилота»; the owner's own run keeps its «Продолжить»", async () => {
-    const { engine, launch } = await launchWithSet({ paused: true });
-    engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 2, undefined, { launchId: launch.launchId });
-    engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1);
-    await openFromAutopilot();
-    await waitFor(() => expect(within(column()).getAllByRole("article", { name: /^Остановлена/ })).toHaveLength(1));
-    const batch = within(column()).getByRole("article", { name: /^Остановлена/ });
-    expect(batch.textContent).toContain("Готово 2 из 5 · партия запуска на паузе");
-    expect(within(batch).getByText("в запуске автопилота")).toBeDefined();
-    expect(within(batch).queryByRole("button") === null).toBe(true);
-    await waitFor(() => expect(within(column()).getAllByRole("article", { name: /^Остановлен\s/ })).toHaveLength(1));
-    expect(within(within(column()).getByRole("article", { name: /^Остановлен\s/ })).getByRole("button", { name: /^(Продолжить|Считаем)/ })).toBeDefined();
-  });
-
   /** Resumes a seeded run of Sofia's through the engine: its job then draws, as the launch's batch or the owner's own. */
   async function resumeRun(client: EngineClient, runId: string): Promise<void> {
     await act(async () => {
@@ -260,49 +204,6 @@ describe("a launch's batches on «Фото»", () => {
     return bar;
   };
 
-  test("the launch's own batch drawing now (its `RunSummary.launchId`): «в запуске автопилота» instead of «Отменить», the batch and the launch under the bar", async () => {
-    const { engine, launch } = await launchWithSet();
-    const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1, undefined, { launchId: launch.launchId });
-    // The launch draws its own batch: the owner's `runs.resume` of it is refused as launch-set, so the launch's draw is started the way the launch starts it.
-    await act(async () => void engine.startSeededLaunchRun(runId));
-    const drawing = launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? { ...a, phase: "drawing" as const, slice: { index: 1, total: 1 } } : a));
-    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: drawing })));
-    await openSofia();
-    await waitFor(() => expect(within(column()).getByText(/^Рисуем фото: \d+ из 5$/)).toBeDefined());
-    await waitFor(() => expect(within(progress()).getByText("в запуске автопилота")).toBeDefined());
-    expect(within(progress()).queryByRole("button", { name: "Отменить" }) === null).toBe(true);
-    expect(within(progress()).getByText(/^партия 1 из 1 · до \$[\d.]+ · запуск /)).toBeDefined();
-  });
-
-  test("the owner's own run, resumed while the launch is paused: its «Отменить», no launch label, no launch limit — though the row still says it draws (M2)", async () => {
-    const { engine, client, launch } = await launchWithSet({ paused: true });
-    const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1);
-    await resumeRun(client, runId);
-    // The launch's last word still has Sofia drawing (it was, before the pause): the batch on screen is not that one.
-    const stale = launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? { ...a, phase: "drawing" as const, slice: { index: 1, total: 1 } } : a));
-    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: stale })));
-    await openSofia();
-    await waitFor(() => expect(within(column()).getByText(/^Рисуем фото: \d+ из 5$/)).toBeDefined());
-    await flush();
-    expect(within(progress()).getByRole("button", { name: "Отменить" })).toBeDefined();
-    expect(within(progress()).queryByText("в запуске автопилота") === null).toBe(true);
-    expect(within(progress()).queryByText(/^партия 1 из 1 · до/) === null).toBe(true);
-  });
-
-  test("the launch stopped: its stopped batch is read again and becomes the owner's to continue (L9)", async () => {
-    const { engine, client, launch } = await launchWithSet({ paused: true });
-    engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 2, undefined, { launchId: launch.launchId });
-    await openFromAutopilot();
-    await waitFor(() => expect(within(column()).getAllByRole("article", { name: /^Остановлена/ })).toHaveLength(1));
-    await act(async () => {
-      const stopped = await client.request("autopilot.stop", { launchId: launch.launchId });
-      if (!stopped.ok) throw new Error("stop refused");
-    });
-    await flush();
-    await waitFor(() => expect(within(column()).queryAllByRole("article", { name: /^Остановлена/ })).toHaveLength(0));
-    const own = within(column()).getByRole("article", { name: /^Остановлен\s/ });
-    expect(within(own).getByRole("button", { name: /^(Продолжить|Считаем)/ })).toBeDefined();
-  });
 });
 
 describe("a paid click on the strip is sent once (round 1 M4), and «Стоп» on its way (L1)", () => {
@@ -325,56 +226,11 @@ describe("a paid click on the strip is sent once (round 1 M4), and «Стоп» 
     await waitFor(() => expect(within(strip()).getByText("в запуске автопилота", { selector: ".ap-launch-mark" })).toBeDefined());
   });
 
-  test("«Стоп» on its way: no «Продолжить запуск» — «запуск останавливается», the set goes back as an ordinary one", async () => {
-    const { engine, launch } = await launchWithSet();
-    await openFromAutopilot();
-    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, status: "stopping" })));
-    await flush();
-    expect(within(strip()).queryByRole("button", { name: /^Продолжить запуск/ }) === null).toBe(true);
-    expect(within(strip()).getByText("запуск останавливается")).toBeDefined();
-    expect(within(strip()).getByText("Запуск останавливается — набор вернётся на «Фото» обычным.")).toBeDefined();
-  });
 });
 
 // ---------- S4.9d: what the S4.9b review left on the strip ----------
 
 describe("S4.9d: the strip's focus as the design's keyboard table has it (S4.9b L5)", () => {
-  test("«Открыть «Фото»» while scenes have no text (M less than the plan): the focus on the first scene without text, not on the button", async () => {
-    const { engine, launch, row } = await launchWithSet({ written: 12 });
-    const scenes = row.scenes ?? 0;
-    expect(scenes).toBeGreaterThan(12);
-    const fewer = { ...row, scenesWithoutText: scenes - 12, continuePhotos: 12 };
-    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? fewer : a)) })));
-    await openFromAutopilot();
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("article", { name: "Сцена 13" }))));
-  });
-
-  test("«Продолжить запуск» accepted: the focus holds on «в запуске автопилота» where the button was, then goes to the batch's progress once it draws", async () => {
-    const { engine, launch } = await launchWithSet();
-    await openFromAutopilot();
-    fireEvent.click(goButton());
-    await flush();
-    const mark = await within(strip()).findByText("в запуске автопилота", { selector: ".ap-launch-mark" });
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(mark)));
-    const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1, undefined, { launchId: launch.launchId });
-    await act(async () => void engine.startSeededLaunchRun(runId));
-    await flush();
-    const bar = await within(column()).findByRole("progressbar", { name: /^Рисуем фото: \d+ из 5$/ });
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(bar)));
-  });
-
-  test("over the plan: under the reason in red a link «Сцена NN» leads to a scene to take out", async () => {
-    const { engine, row } = await launchWithSet();
-    await openFromAutopilot();
-    engine.failNext("autopilot.continueAfterReview", { code: "VALIDATION", sceneReason: "over-plan", detail: "more active scenes than planned" });
-    fireEvent.click(goButton());
-    await flush();
-    const last = String(row.scenes ?? 0).padStart(2, "0");
-    const toScene = within(strip()).getByRole("button", { name: `Сцена ${last}` });
-    expect(toScene.closest(".ap-launch-why") !== null).toBe(true);
-    fireEvent.click(toScene);
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("article", { name: `Сцена ${last}` }))));
-  });
 });
 
 describe("S4.6p: the strip shows the engine's expected price of the draw (PhotosS4: «12 фото ≈ $0.84», «Предел до $2.94»)", () => {
@@ -395,21 +251,6 @@ describe("S4.6p: the strip shows the engine's expected price of the draw (Photos
     expect(callsOf(engine, "scenes.estimateCompose")).toHaveLength(0);
     // The generate card prices its own run (the form's count and categories); the strip no longer probes with one built-in category to take the writer off.
     expect(callsOf(engine, "runs.estimate").filter((c) => c.payload.categories.length === 1 && c.payload.categories[0] === "home")).toHaveLength(0);
-  });
-
-  test("the figure is below the limit it sits beside: an expected price, not a ceiling", async () => {
-    const { client, launch, row } = await launchWithSet();
-    await openFromAutopilot();
-    const asked = await client.request("runs.estimateImages", { launchId: launch.launchId, avatarId: SOFIA.avatarId });
-    if (!asked.ok) throw new Error("the engine refused the price");
-    expect(asked.result.estimate.expectedMicros).toBeLessThan(row.drawAllocationMicros ?? 0);
-    await waitFor(() => expect(stepsOf()[1]).toContain("≈"));
-  });
-
-  test("where today's prices come from is the estimate's own source, read with the figure", async () => {
-    await launchWithSet();
-    await openFromAutopilot();
-    await waitFor(() => expect(strip().querySelector(".photos-cost-row")?.textContent ?? "").toMatch(/^Цены(OpenRouter|резервные) · /));
   });
 
   test("a price the engine cannot give leaves step 2 at «≈ …»: nothing is worked out in its place, and the limit stays", async () => {

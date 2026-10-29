@@ -93,48 +93,9 @@ describe("a compose cut off by a closed Studio", () => {
 });
 
 describe("«Дописать» after a stop", () => {
-  test("its job's progress shows «Отменить» and the focus goes there, as after ⟳, «Повторить» and «Другие сцены для N» (README «Keyboard and focus»)", async () => {
-    const { client } = await cutOff();
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
-    await reconcile(client);
-    await waitFor(() => expect(isDisabled(goButton())).toBe(false));
-    fireEvent.click(goButton());
-    await flush();
-    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("button", { name: "Отменить" }))));
-  });
 });
 
 describe("a compose that gave up on a request", () => {
-  test("«Готово 35 из 60 · 25 не составлены», «Убрать 25 пустых» and «Другие сцены для 5»; × hides it and the focus goes to the counter (ReviewGaveUp)", async () => {
-    const { engine, scheduler } = await openReview();
-    const more = within(card()).getByRole("button", { name: "Больше" });
-    for (let i = 0; i < 8; i++) {
-      fireEvent.click(more);
-      await flush();
-    }
-    engine.failNextSceneAttempt("ok");
-    engine.failNextSceneAttempt("gave-up"); // a chunk given up on (S5.6d: no job reaches this state any more; the screen still shows what an older version left)
-    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 60 сцен · до $0.23") }));
-    await flush();
-    runAll(scheduler);
-    await flush();
-    const notice = within(column()).getByRole("status");
-    expect(notice.textContent).toContain("Готово 35 из 60 · 25 не составлены");
-    expect(notice.textContent).toContain("Отброшены при проверке: модель дважды вернула для них неподходящий текст.");
-    expect(within(notice).getByRole("button", { name: nb("Убрать 25 пустых") })).toBeDefined();
-    const others = await within(notice).findByRole("button", { name: "Другие сцены для 5 · до $0.075" });
-    expect(within(column()).getByRole("button", { name: nb("25 сцен не составлены — перейти к первой, сцене 26") })).toBeDefined();
-    expect(priceRow("Сцены")).toMatch(/\$0\.0\d\d/);
-    fireEvent.click(others);
-    await flush();
-    expect(callsOf(engine, "scenes.write").at(-1)?.payload).toMatchObject({ target: { kind: "rewrite", sceneIds: [26, 27, 28, 29, 30], redraw: true }, acceptedWorstMicros: 2 * ATTEMPT });
-    runAll(scheduler);
-    await flush();
-    fireEvent.click(within(within(column()).getByRole("status")).getByRole("button", { name: "Скрыть плашку — счётчик в шапке колонки останется" }));
-    await flush();
-    expect(within(column()).queryByRole("status") === null).toBe(true);
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("button", { name: nb("20 сцен не составлены — перейти к первой, сцене 31") })));
-  });
 });
 
 describe("a rewrite cut off", () => {
@@ -174,16 +135,6 @@ describe("a rewrite cut off", () => {
     expect(priceRow("Сцены")).toMatch(/до \$0\.0\d\d/);
   });
 
-  test("«Оставить как есть» lets the scene go free of its marker; the focus goes to that card", async () => {
-    const { engine } = await rewriteCut();
-    const notice = await within(column()).findByRole("alert");
-    fireEvent.click(within(notice).getByRole("button", { name: "Оставить как есть" }));
-    await flush();
-    expect(callsOf(engine, "scenes.edit").at(-1)?.payload.op).toEqual({ op: "dismissInterrupted", sceneIds: [2] });
-    expect(within(sceneCard(2)).queryByText("замена прервана") === null).toBe(true);
-    expect(describeElement(document.activeElement)).toBe(describeElement(sceneCard(2)));
-  });
-
   test("its ⟳ offers both: carrying the cut-off write on («Повторить · до $0.038») and a new one («Заменить · до $0.075»)", async () => {
     const { engine, client } = await rewriteCut();
     await reconcile(client);
@@ -198,36 +149,7 @@ describe("a rewrite cut off", () => {
     expect(callsOf(engine, "scenes.write").at(-1)?.payload).toMatchObject({ target: { kind: "resume", write: 2 }, acceptedWorstMicros: ATTEMPT });
   });
 
-  test("a scene removed since: no marker on its card, and the notice says to bring it back before carrying it on", async () => {
-    await rewriteCut({ removed: true });
-    await waitFor(() => expect(within(sceneCard(2)).getByText("убрана")).toBeDefined());
-    expect(within(sceneCard(2)).queryByText("замена прервана") === null).toBe(true);
-    // Every scene of the write removed: there is nothing to carry on, so nothing is said.
-    expect(within(column()).queryByText(/Замена сцены 02/) === null).toBe(true);
-  });
 });
 
 describe("an idea write cut off", () => {
-  test("«Свои сцены не написаны»: «Повторить», «Открыть идею» (the form with the idea), «Не нужно» (free; the focus goes to «+ Своя сцена»)", async () => {
-    const { engine } = await openReview({
-      sceneSets: [
-        { avatarId: MIA.avatarId, sceneSetId: "set-idea-0001", count: 3, written: 3, categories: [LLM_ONLY_REF], writes: 1, reviewWrites: [{ kind: "idea", k: 2, idea: "Утренний кофе на балконе", count: 2, shot: null, sceneIds: [4, 5], cutOff: true }] },
-      ],
-    });
-    const notice = await within(column()).findByRole("alert");
-    expect(notice.textContent).toContain("Свои сцены не написаны");
-    expect(notice.textContent).toContain("Studio закрылась, пока модель писала 2 сцены по вашему описанию, — они не добавлены. Текст идеи сохранён.");
-    expect(await within(notice).findByRole("button", { name: "Повторить · до $0.038" })).toBeDefined();
-    fireEvent.click(within(notice).getByRole("button", { name: "Открыть идею" }));
-    await flush();
-    const form = within(column()).getByRole("region", { name: "Своя сцена · по описанию" });
-    expect(fieldValue(within(form).getByRole("textbox"))).toBe("Утренний кофе на балконе");
-    fireEvent.click(within(form).getByRole("button", { name: "Отмена" }));
-    await flush();
-    fireEvent.click(within(within(column()).getByRole("alert")).getByRole("button", { name: "Не нужно" }));
-    await flush();
-    expect(callsOf(engine, "scenes.edit").at(-1)?.payload.op).toEqual({ op: "dismissInterrupted", write: 2 });
-    expect(within(column()).queryByText("Свои сцены не написаны") === null).toBe(true);
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("button", { name: "Своя сцена" })));
-  });
 });

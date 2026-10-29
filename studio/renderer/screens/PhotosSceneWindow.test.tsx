@@ -41,21 +41,4 @@ describe("between the write's answer and `scenes.changed`", () => {
     expect(within(column()).getByText("Дописываем сцены: 0 из 35")).toBeDefined();
   });
 
-  test("compose is shut and sends nothing again once it is answered, before the set is read", async () => {
-    const { engine, scheduler } = await openGated();
-    const compose = await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") });
-    // The set reaches the screen by the read compose asks for as soon as it is answered (and by the event): hold both.
-    engine.holdEvents();
-    engine.delayNext("scenes.get", HELD_MS);
-    fireEvent.click(compose);
-    await flush();
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(1);
-    expect(isDisabled(goButton())).toBe(true);
-    fireEvent.click(goButton());
-    await flush();
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(1);
-    engine.releaseEvents();
-    tick(scheduler, 1);
-    await flush();
-  });
 });

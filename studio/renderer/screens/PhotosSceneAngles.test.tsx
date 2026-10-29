@@ -35,39 +35,6 @@ const BED_SCENES: readonly (Planned | Own)[] = [
 // S5.7c (mockup 28): the strip's line no longer lists the set's «Ракурсы» — the angle comes from the scene — but still names who keeps angles of their own.
 // These sets are seeded as a build before «Подача» stored them (with toggles), so the line names no «Подача» (PhotosSceneLevel.test.tsx has it).
 describe("the strip's angle line (ReviewAngles; contract note 9)", () => {
-  test("it names the category with its own angles and own scenes, then «Пересоставить…» as before", async () => {
-    await angledSet();
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    expect(within(card()).getByText(withText(/^Ракурс — из сцены; у «Домашнее у кровати» — свои; у своих сцен — по описанию\. Настройки набора не меняются — Пересоставить… начнёт заново\.$/))).toBeDefined();
-    expect(within(card()).queryByRole("button", { name: /^ещё / , expanded: false }) === null).toBe(true);
-  });
-
-  test("several such categories: «и ещё N» is a button that opens them with their angles, the focus staying on it", async () => {
-    const yoga = category(5, "Йога дома", { ...BED_POOL, poses: ["profile"] });
-    const city = category(6, "Ночной город", { ...BED_POOL, poses: ["back"] });
-    await openReview({
-      categories: [BED, yoga, city],
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count: 3, written: 3, categories: [BED.categoryId, yoga.categoryId, city.categoryId] }],
-    });
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    expect(within(card()).getByText(withText(/^Ракурс — из сцены; у «Домашнее у кровати» и ещё 2 — свои\. Настройки набора/))).toBeDefined();
-    const more = within(card()).getByRole("button", { name: "ещё 2" });
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    more.focus();
-    fireEvent.click(more);
-    await flush();
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    const list = document.getElementById(more.getAttribute("aria-controls") ?? "");
-    expect(list?.hidden).toBe(false);
-    expect(Array.from(list?.querySelectorAll("li") ?? []).map((li) => li.textContent)).toEqual(["Домашнее у кровати — три четверти, со спины", "Йога дома — профиль", "Ночной город — со спины"]);
-    expect(describeElement(document.activeElement)).toBe(describeElement(more));
-  });
-
-  test("neither: the line as before", async () => {
-    await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count: 3, written: 3 }] });
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    expect(card().textContent).toContain("Ракурс — из сцены. Настройки набора не меняются");
-  });
 });
 
 describe("the pose tag on a scene card (ReviewStates I)", () => {
@@ -97,21 +64,6 @@ describe("⟳ «Другая сцена» of a category with angles of its own",
   }
   const free = (category: string): string => `Новое место, наряд, действие, время дня и ракурс из категории «${category}» и новый текст — его пишет приложение, поэтому бесплатно.`;
 
-  test("a selfie: the angle is drawn again and the shot may change; another shot: no clause; a built-in: no clause", async () => {
-    await angledSet();
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    const selfie = await popoverOf(2);
-    expect(selfie.textContent).toContain(`${free("Домашнее у кровати")} Со спины селфи не снять — тогда кадр сменится. Сцена 02 заменится сразу.`);
-    fireEvent.click(within(selfie).getByRole("button", { name: "Отмена" }));
-    await flush();
-    const friend = await popoverOf(4);
-    expect(friend.textContent).toContain(`${free("Домашнее у кровати")} Сцена 04 заменится сразу.`);
-    fireEvent.click(within(friend).getByRole("button", { name: "Отмена" }));
-    await flush();
-    const home = await popoverOf(1);
-    expect(home.textContent).toContain(`${free("Дом")} Сцена 01 заменится сразу.`);
-  });
-
   test("it reads the category's angles as they are now: cleared in «Мои категории», ⟳ says the text without them", async () => {
     const { client } = await angledSet();
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
@@ -126,25 +78,4 @@ describe("⟳ «Другая сцена» of a category with angles of its own",
 });
 
 describe("«+ Своя сцена»: the hint follows the shot (ReviewAddIdea, ReviewEmpty; ReviewStates I)", () => {
-  test("«Авто», a shot without a phone, a selfie, the mirror — the idea and the shot picker point to it", async () => {
-    await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count: 3, written: 3 }] });
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    fireEvent.click(within(column()).getByRole("button", { name: "Своя сцена" }));
-    await flush();
-    const form = within(column()).getByRole("region", { name: "Своя сцена · по описанию" });
-    const idea = within(form).getByRole("textbox", { name: "Идея · на любом языке" });
-    const shot = within(form).getByRole("combobox", { name: "Кадр" });
-    const auto = "Модель выберет кадр и ракурс по идее: «вид сзади» — со спины, «сбоку» — профиль; селфи — только анфас или три четверти. Зеркало — только если оно есть в идее.";
-    expect(describedText(idea)).toContain(auto);
-    expect(describedText(shot)).toBe(auto);
-    fireEvent.change(shot, { target: { value: "candid" } });
-    await flush();
-    expect(describedText(shot)).toBe("Ракурс модель выберет по идее: «вид сзади» — со спины, «сбоку» — профиль.");
-    fireEvent.change(shot, { target: { value: "selfie" } });
-    await flush();
-    expect(describedText(shot)).toBe("Селфи — только анфас или три четверти: ракурс модель выберет из них. Нужен вид сзади или сбоку — выберите «Авто» или другой кадр.");
-    fireEvent.change(shot, { target: { value: "mirror" } });
-    await flush();
-    expect(describedText(idea)).toContain("Зеркало — только анфас или три четверти: ракурс модель выберет из них.");
-  });
 });

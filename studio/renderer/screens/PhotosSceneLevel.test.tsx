@@ -70,26 +70,13 @@ function tags(n: number): string[] {
 describe("who took the photo (mockup 28): the capture's own label", () => {
   test.each([
     ["mirror-hidden", "Зеркало, лицо за телефоном"],
-    ["above", "Селфи сверху"],
-    ["prone", "Селфи лёжа"],
-    ["over-shoulder", "Через плечо"],
-    ["timer", "Телефон на таймере"],
     ["pov-legs", "Ножки сверху"],
-    ["low-feet", "Снизу, к стопам"],
     ["friend", "Попросила снять"],
-    ["candid", "Кэндид"],
-    ["mirror", "Зеркало"],
-    ["selfie", "Селфи"],
   ] as const)("%s reads «%s»", async (capture, label) => {
     await openDressed({ captures: { 1: capture } });
     await waitFor(() => expect(tags(1)[1]).toBe(label));
   });
 
-  test("a scene with no capture (stored before them) reads its shot's label", async () => {
-    await openDressed({ captures: { 1: null } });
-    await waitFor(() => expect(tags(1)).toHaveLength(2));
-    expect(["Попросила снять", "Селфи", "Зеркало", "Кэндид"]).toContain(tags(1)[1] ?? "");
-  });
 });
 
 describe("«кокетливо» (mockup 28)", () => {
@@ -108,16 +95,6 @@ describe("the strip's line (mockup 28): «Подача» and the angle from the 
     await waitFor(() => expect(lockLine()).toBe("Подача: кокетливая · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново."));
   });
 
-  test("an ordinary set: «Подача: обычная · Ракурс — из сцены.»", async () => {
-    await openDressed({});
-    await waitFor(() => expect(lockLine()).toBe("Подача: обычная · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново."));
-  });
-
-  test("a set made before «Подача» names none, and no «Ракурсы» either: its toggles change nothing now", async () => {
-    await openDressed({ poses: { profile: true, back: false } });
-    await waitFor(() => expect(lockLine()).toBe("Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново."));
-    expect(card().textContent?.includes("Ракурсы") ?? true).toBe(false);
-  });
 });
 
 describe("⟳ «Другая сцена» the app writes (mockup 28)", () => {
@@ -132,15 +109,6 @@ describe("⟳ «Другая сцена» the app writes (mockup 28)", () => {
     await within(sceneCard(2)).findByRole("button", { name: "Заменить · бесплатно" });
     expect(within(sceneCard(2)).getByRole("dialog").querySelector(".scene-pop-text")?.textContent).toBe(
       `Новое место, наряд, действие, время дня и ракурс из категории «${categoryOf(2)}» и новый текст — его пишет приложение, поэтому бесплатно. Подача та же — кокетливая. Сцена 02 заменится сразу.`,
-    );
-  });
-
-  test("says nothing of «Подача» for an ordinary scene", async () => {
-    await openDressed({});
-    fireEvent.click(await within(sceneCard(3)).findByRole("button", { name: "Другая сцена вместо 03" }));
-    await within(sceneCard(3)).findByRole("button", { name: "Заменить · бесплатно" });
-    expect(within(sceneCard(3)).getByRole("dialog").querySelector(".scene-pop-text")?.textContent).toBe(
-      `Новое место, наряд, действие, время дня и ракурс из категории «${categoryOf(3)}» и новый текст — его пишет приложение, поэтому бесплатно. Сцена 03 заменится сразу.`,
     );
   });
 

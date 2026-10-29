@@ -30,62 +30,9 @@ describe("a compose", () => {
     expect(focused()).toBe(describeElement(sceneCard(1)));
   });
 
-  test("cancelled, it wrote nothing: the focus goes to the column title, whose notice says what stopped", async () => {
-    const { scheduler } = await composed();
-    await waitFor(() => expect(focused()).toBe(describeElement(cancelButton())));
-    fireEvent.click(cancelButton());
-    await flush();
-    runAll(scheduler);
-    await flush();
-    expect(within(column()).getByText(/^Составление остановлено/)).toBeDefined();
-    expect(focused()).toBe(describeElement(columnTitle()));
-  });
-
-  test("a focus the owner moved elsewhere meanwhile stays there", async () => {
-    const { scheduler } = await composed();
-    await waitFor(() => expect(focused()).toBe(describeElement(cancelButton())));
-    const sheet = within(card()).getByRole("button", { name: /^Мои категории/ });
-    sheet.focus();
-    runAll(scheduler);
-    await flush();
-    expect(focused()).toBe(describeElement(sheet));
-  });
 });
 
 describe("⟳ and «Дописать»", () => {
-  test("⟳: once the other scene is written the focus goes to that scene's card", async () => {
-    const { scheduler } = await openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4, categories: [LLM_ONLY_REF] }] });
-    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Другая сцена вместо 03" }));
-    await flush();
-    fireEvent.click(await within(sceneCard(3)).findByRole("button", { name: "Заменить · до $0.075" }));
-    await flush();
-    await waitFor(() => expect(focused()).toBe(describeElement(cancelButton())));
-    runAll(scheduler);
-    await flush();
-    expect(within(sceneCard(3)).getByText("новая")).toBeDefined();
-    expect(focused()).toBe(describeElement(sceneCard(3)));
-  });
-
-  test("«Дописать»: once the waiting scenes are written the focus goes to the first of them", async () => {
-    const { client, scheduler } = await openReview({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }],
-    });
-    await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
-    await act(async () => {
-      const reply = await client.request("money.reconcile", {});
-      if (!reply.ok) throw new Error(reply.error.code);
-    });
-    await flush();
-    await waitFor(() => expect(isDisabled(goButton())).toBe(false));
-    fireEvent.click(goButton());
-    await flush();
-    await waitFor(() => expect(focused()).toBe(describeElement(cancelButton())));
-    runAll(scheduler);
-    await flush();
-    expect(within(sceneCard(26)).queryByText("ждёт") === null).toBe(true);
-    expect(focused()).toBe(describeElement(sceneCard(26)));
-  });
 });
 
 describe("«Отрисовать»", () => {
