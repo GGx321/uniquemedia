@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { GOLDEN } from "./testing/golden";
 import { familyOf, planParity, PUSH_PICKS, type ParityEntry, type ParityPick } from "./testing/pushSet";
 import { SCENARIOS } from "./testing/scenarios";
+useNativeGlobals();
 
 // Which parity stories a push plays and which only the nightly run does (parity.test.ts registers them from this plan). The golden file is untouched by the split: only WHERE a
 // key runs moves, so the two checks that matter are that the nightly run plays every key of the golden file, and that a push plays at least one story of every family of commands.
