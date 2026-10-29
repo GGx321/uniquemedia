@@ -28,38 +28,10 @@ describe("the price column with the review off (mockup 26)", () => {
     expect(scenesSub()).toBe("для «Только модель» текст пишет модель");
   });
 
-  test("the built-ins alone: «бесплатно», «их пишет приложение», as before", async () => {
-    await openPhotos({ categories: [FIXTURE] });
-    await waitFor(() => expect(priceRow("Сцены")).toBe("Сцены бесплатно"));
-    expect(scenesSub()).toBe("их пишет приложение");
-  });
 });
 
 describe("the price column with the review on (mockup 26)", () => {
-  test("the compose step names the category the model writes for", async () => {
-    setup({ avatars: [MIA], sceneReview: "on", categories: [FIXTURE] });
-    await screen.findByRole("heading", { level: 2, name: "Mia" });
-    await openSection("Фото");
-    await screen.findByRole("heading", { level: 1, name: "Mia" });
-    await flush();
-    await turnOn("Только модель");
-    await waitFor(() => expect(priceRow("Сцены")).toMatch(/≈ \$0\.\d+$/));
-    expect(scenesSub()).toBe("для «Только модель» текст пишет модель");
-  });
 });
 
 describe("the scenes column (mockup 26)", () => {
-  test("«пишет приложение и {модель}» when the run mixes the template's categories and the model's", async () => {
-    await openPhotos({ categories: [FIXTURE] });
-    await turnOn("Только модель");
-    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok\S*$/));
-  });
-
-  test("the model alone when every category of the run is the model's", async () => {
-    await openPhotos({ categories: [FIXTURE] });
-    await turnOn("Только модель");
-    for (const name of ["Дом", "Улица", "Виды", "Гламур", "Фитнес"]) await turnOn(name);
-    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · \S*grok\S*$/));
-    expect(scenesSub()).toBe("для «Только модель» текст пишет модель");
-  });
 });

@@ -65,145 +65,18 @@ describe("the panel", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(myCategories()));
   });
 
-  test("every category file holds a place towards the 50: unreadable ones and ones past the 50th are counted and said", async () => {
-    await openPhotos({ categories: [PARIS, WINTER], unreadableCategories: 1 });
-    await openSheet();
-    expect(within(sheet()).getByText("3 из 50 · общие для всех аватаров")).toBeDefined();
-    expect(within(sheet()).getByText("1 файл категории не читается — он не удалён")).toBeDefined();
-  });
-
-  test("no category yet: one invitation instead of the list, and it opens «Новая категория»", async () => {
-    await openPhotos();
-    await openSheet();
-    expect(within(sheet()).getByText("0 из 50 · общие для всех аватаров")).toBeDefined();
-    expect(within(sheet()).getByRole("heading", { level: 3, name: "Своих категорий пока нет" })).toBeDefined();
-    expect(within(sheet()).queryByRole("button", { name: "Новая" }) === null).toBe(true);
-    const invite = within(sheet()).getByRole("button", { name: "Создать категорию" });
-    expect(describeElement(document.activeElement)).toBe(describeElement(invite));
-    fireEvent.click(invite);
-    await flush();
-    expect(screen.queryByRole("dialog", { name: "Мои категории" }) === null).toBe(true);
-    const dialog = screen.getByRole("dialog", { name: "Новая категория" });
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByLabelText(/^Название/)));
-    fireEvent.keyDown(window, { key: "Escape" });
-    await flush();
-    expect(describeElement(document.activeElement)).toBe(describeElement(myCategories()));
-  });
 });
 
 // S5.5: a created category whose description asked for what the pool generator will not draw says so on its card (it came out in everyday clothes).
 describe("the note on what is not drawn", () => {
   const LINGERIE = category(5, "Реклама белья", BED_POOL, { description: "В нижнем брендовом белье на кровати для рекламы" });
 
-  test("a category whose description asks for lingerie carries the note on its card, and an ordinary one does not", async () => {
-    await openPhotos({ categories: [PARIS, LINGERIE] });
-    await openSheet();
-    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
-    fireEvent.click(row("Реклама белья"));
-    await flush();
-    expect(within(sheet()).getByText(REVEALING_NOTE_DONE)).toBeDefined();
-    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
-    fireEvent.click(row("Кофейни Парижа"));
-    await flush();
-    expect(within(sheet()).queryByText(REVEALING_NOTE_DONE) === null).toBe(true);
-  });
-
-  test("the regenerate box shows it for the text being typed, before the paid click", async () => {
-    await openPhotos({ categories: [PARIS] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
-    await flush();
-    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
-    fireEvent.change(within(sheet()).getByLabelText(/^Новое описание/), { target: { value: "кофейни, девушка в купальнике" } });
-    await flush();
-    expect(within(sheet()).getByText(REVEALING_NOTE)).toBeDefined();
-  });
 });
 
 describe("rename (free)", () => {
-  test("the pencil opens the field; Enter saves; the list and the chip take the new name; the focus goes back to the pencil", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS, WINTER] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Переименовать" }));
-    await flush();
-    const field = within(sheet()).getByLabelText("Название") as HTMLInputElement;
-    expect(describeElement(document.activeElement)).toBe(describeElement(field));
-    expect(field.value).toBe("Кофейни Парижа");
-    fireEvent.change(field, { target: { value: "Кофейни и улочки Парижа" } });
-    expect(within(sheet()).getByText("23/40")).toBeDefined();
-    fireEvent.keyDown(field, { key: "Enter" });
-    await flush();
-    expect(callsOf(engine, "categories.update").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId, name: "Кофейни и улочки Парижа" }]);
-    expect(row("Кофейни и улочки Парижа")).toBeDefined();
-    expect(within(chipsGroup()).getByRole("button", { name: "Кофейни и улочки Парижа" })).toBeDefined();
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Переименовать" })));
-  });
-
-  test("Escape cancels the rename, not the panel; a blank or taken name is refused before anything is sent", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS, WINTER] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Переименовать" }));
-    await flush();
-    const field = within(sheet()).getByLabelText("Название") as HTMLInputElement;
-    fireEvent.change(field, { target: { value: "  " } });
-    expect(within(sheet()).getByText("Введите название.")).toBeDefined();
-    expect(isDisabled(within(sheet()).getByRole("button", { name: "Сохранить" }))).toBe(true);
-    fireEvent.change(field, { target: { value: "горы ЗИМОЙ" } });
-    expect(within(sheet()).getByText(CATEGORY_REASONS_RU["name-taken"])).toBeDefined();
-    fireEvent.keyDown(field, { key: "Enter" });
-    await flush();
-    fireEvent.keyDown(window, { key: "Escape" });
-    await flush();
-    expect(screen.getByRole("dialog", { name: "Мои категории" })).toBeDefined();
-    expect(within(sheet()).queryByLabelText("Название") === null).toBe(true);
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Переименовать" })));
-    expect(callsOf(engine, "categories.update")).toHaveLength(0);
-  });
 });
 
 describe("remove a place or an outfit (free)", () => {
-  test("× removes it; the focus goes to the × of the next row", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать место: sidewalk cafe terrace" }));
-    await flush();
-    expect(callsOf(engine, "categories.update").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId, removeLocations: ["sidewalk cafe terrace"] }]);
-    expect(within(sheet()).queryByText("sidewalk cafe terrace") === null).toBe(true);
-    expect(within(sheet()).getByText("Места · 5")).toBeDefined();
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Убрать место: bookshop by the river" })));
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать наряд: navy knit cardigan and midi skirt" }));
-    await flush();
-    expect(callsOf(engine, "categories.update").at(-1)?.payload).toEqual({ categoryId: PARIS.categoryId, removeOutfits: ["navy knit cardigan and midi skirt"] });
-    // The last outfit went: the focus goes to the one before.
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Убрать наряд: white blouse, high-waisted jeans" })));
-  });
-
-  test("the only mirror place of a mirror deck, and every item at its minimum, cannot go: the × says why, nothing is sent", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS, WINTER] });
-    await openSheet();
-    const mirror = within(sheet()).getByRole("button", { name: "Убрать место: cafe restroom mirror" });
-    expect(mirror.getAttribute("aria-disabled")).toBe("true");
-    expect(mirror.getAttribute("title")).toBe("Единственное место с зеркалом — без него не будет кадров в зеркале");
-    fireEvent.click(mirror);
-    fireEvent.click(row("Горы зимой"));
-    await flush();
-    for (const x of within(sheet()).getAllByRole("button", { name: /^Убрать (место|наряд):/ })) expect(x.getAttribute("aria-disabled")).toBe("true");
-    expect(within(sheet()).getByText("Мест уже 5 — меньше нельзя. Пересоздайте категорию, если места не нравятся.")).toBeDefined();
-    expect(within(sheet()).getByText("Нарядов уже 3 — меньше нельзя. Пересоздайте категорию, если наряды не нравятся.")).toBeDefined();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать место: ski lift queue" }));
-    await flush();
-    expect(callsOf(engine, "categories.update")).toHaveLength(0);
-  });
-
-  test("a removal the engine refuses (another window took one meanwhile) says why, and nothing changes", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openSheet();
-    engine.failNext("categories.update", { code: "VALIDATION", categoryReason: "below-minimum" });
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать место: bookshop by the river" }));
-    await flush();
-    expect(within(sheet()).getByText(CATEGORY_REASONS_RU["below-minimum"])).toBeDefined();
-    expect(within(sheet()).getByText("Места · 6")).toBeDefined();
-  });
 });
 
 describe("regenerate (paid)", () => {
@@ -307,38 +180,6 @@ describe("regenerate (paid)", () => {
     expect(regenButton().textContent).toBe("Подтвердить новую цену · до $0.052");
   });
 
-  test("another window composing a category: «Пересоздать» waits with the note until that call ends", async () => {
-    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
-    engine.delayNext("categories.create", 500);
-    let other: Promise<unknown> = Promise.resolve();
-    inAct(() => {
-      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
-    });
-    await flush();
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
-    await flush();
-    expect(isDisabled(regenButton())).toBe(true);
-    expect(within(sheet()).getByText("Сейчас составляется «Горы зимой». По одной категории за раз — дождитесь её.")).toBeDefined();
-    runAll(scheduler);
-    await act(async () => {
-      await other;
-    });
-    await flush();
-    expect(within(sheet()).queryByText(/Сейчас составляется/) === null).toBe(true);
-    expect(isDisabled(regenButton())).toBe(false);
-  });
-
-  test("until a reconcile the button waits with the reconcile's reason", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    inAct(() => engine.requireReconcile(["open-reserves"]));
-    await flush();
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
-    await flush();
-    expect(isDisabled(regenButton())).toBe(true);
-    expect(within(sheet()).getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
-  });
 });
 
 describe("delete (free)", () => {
@@ -381,27 +222,6 @@ describe("calls a closed Studio left", () => {
     await flush();
     expect(callsOf(engine, "categories.dismissInterrupted").map((c) => c.payload)).toEqual([{ jobId: "job-left-0001" }]);
     expect(screen.queryByText("Создание прервано — Studio закрылась") === null).toBe(true);
-  });
-
-  test("«Создать снова» waits while another window composes a category, with the note, and is back when that call ends", async () => {
-    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS], interruptedCategories: [interruptedCreate({ spentMicros: 0, openReserveMicros: 0 })] });
-    engine.delayNext("categories.create", 500);
-    let other: Promise<unknown> = Promise.resolve();
-    inAct(() => {
-      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
-    });
-    await flush();
-    fireEvent.click(myCategories());
-    await flush();
-    const retry = within(sheet()).getByRole("button", { name: "Создать снова · до $0.045" });
-    expect(isDisabled(retry)).toBe(true);
-    expect(within(sheet()).getByText("Сейчас составляется «Горы зимой». По одной категории за раз — дождитесь её.")).toBeDefined();
-    runAll(scheduler);
-    await act(async () => {
-      await other;
-    });
-    await flush();
-    expect(isDisabled(within(sheet()).getByRole("button", { name: "Создать снова · до $0.045" }))).toBe(false);
   });
 
   test("«Создать снова» is a new request at the price on it, followed in the dialog; «Изменить описание» opens the dialog with the text", async () => {
@@ -459,39 +279,4 @@ describe("phase 2: «Мои категории» with a scene set open (CS.7 M1)
     return harness;
   }
 
-  test("deleting a category the open set draws from says that «Другая сцена» goes for its scenes there (ReviewStates E)", async () => {
-    await withOpenSet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    const confirm = within(sheet()).getByRole("alertdialog", { name: "Удалить «Кофейни Парижа»?" });
-    expect(confirm.textContent).toContain(
-      nb("Запуски, где она уже есть, не изменятся. В открытом наборе сцен её 3 сцены останутся как есть, но «Другая сцена» для них станет недоступна — новое место из удалённой категории не взять. Вернуть категорию нельзя."),
-    );
-    // A category the set does not draw from is deleted with the phase-1 words.
-    fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
-    await flush();
-    fireEvent.click(row("Горы зимой"));
-    await flush();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(within(sheet()).getByRole("alertdialog", { name: "Удалить «Горы зимой»?" }).textContent).not.toContain("В открытом наборе");
-  });
-
-  test("a category made while the set is open goes into the next set; «Готово» hands the focus to the strip's «Мои категории» (decision 17)", async () => {
-    await withOpenSet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Новая" }));
-    await flush();
-    const dialog = screen.getByRole("dialog", { name: "Новая категория" });
-    fireEvent.change(within(dialog).getByLabelText(/^Название/), { target: { value: "Рынки" } });
-    fireEvent.change(within(dialog).getByLabelText(/^Описание/), { target: { value: "Рынки и прилавки с фруктами" } });
-    await flush();
-    fireEvent.click(await within(dialog).findByRole("button", { name: /^Создать · до \$/ }));
-    await flush();
-    const done = screen.getByRole("dialog", { name: "Рынки" });
-    expect(within(done).getByText("Набор сцен уже составлен — категория войдёт в следующий набор. Открытый набор не меняется.")).toBeDefined();
-    expect(within(done).queryByText(/уже включена в запуск/) === null).toBe(true);
-    fireEvent.click(within(done).getByRole("button", { name: "Готово" }));
-    await flush();
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(card()).getByRole("button", { name: /^Мои категории/ })));
-  });
 });

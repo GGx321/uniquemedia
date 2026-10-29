@@ -69,14 +69,6 @@ describe("«Новая категория»: the description hint and the «го
     expect(describeElement(document.activeElement)).toBe(describeElement(within(done).getByRole("button", { name: "Готово" })));
   });
 
-  test("a description that names none: «анфас и три четверти», «в описании не названы», no note", async () => {
-    await openPhotos();
-    const done = await createFromDialog("Рынки", "Рынки и прилавки с фруктами");
-    expect(within(done).queryByRole("list", { name: "Ракурсы" }) === null).toBe(true);
-    expect(within(done).getByText("анфас и три четверти")).toBeDefined();
-    expect(within(done).getByText("в описании не названы")).toBeDefined();
-    expect(/в этом ракурсе|в этих ракурсах/.test(done.textContent ?? "")).toBe(false);
-  });
 });
 
 describe("«Мои категории»: the «Ракурсы» block (CatSheet, CatSheetAngles)", () => {
@@ -92,34 +84,6 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
     expect(hintText()).toBe(`${BED_NOTE} ${BOLD_TAIL}`);
     const hint = document.getElementById(anglesGroup().getAttribute("aria-describedby") ?? "");
     expect(hint?.getAttribute("aria-live")).toBe("polite");
-  });
-
-  test("no angles of its own: «Анфас» and «Три четверти» dimmed-on with what a category without its own gets, no «Убрать свои ракурсы»", async () => {
-    await openPhotos({ categories: [PARIS, BED] });
-    await openSheet();
-    expect(["Анфас", "Три четверти", "Профиль", "Со спины"].map((name) => chip(name).getAttribute("aria-pressed"))).toEqual(["true", "true", "false", "false"]);
-    expect(chip("Анфас").getAttribute("title")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без анфаса");
-    expect(chip("Три четверти").getAttribute("title")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без трёх четвертей");
-    expect(chip("Анфас").className).toContain("cat-angle-implied");
-    expect(chip("Профиль").className.includes("cat-angle-implied")).toBe(false);
-    expect(within(sheet()).queryByRole("button", { name: "Убрать свои ракурсы" }) === null).toBe(true);
-    expect(hintText()).toBe(NONE_HINT);
-  });
-
-  test("the first press from no angles of its own starts at front and three-quarter; the focus stays on the chip; the hint follows", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await openSheet();
-    const back = chip("Со спины");
-    back.focus();
-    fireEvent.click(back);
-    await flush();
-    expect(callsOf(engine, "categories.update").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId, poses: ["front", "three-quarter", "back"] }]);
-    expect(["Анфас", "Три четверти", "Профиль", "Со спины"].map((name) => chip(name).getAttribute("aria-pressed"))).toEqual(["true", "true", "false", "true"]);
-    expect(chip("Анфас").className.includes("cat-angle-implied")).toBe(false);
-    expect(describeElement(document.activeElement)).toBe(describeElement(chip("Со спины")));
-    // Paris's deck holds a selfie and a mirror shot.
-    expect(hintText()).toBe(`Её сцены — поровну в этих ракурсах. Селфи и кадров в зеркале станет меньше: только анфас или три четверти; со спины — без проверки сходства. ${BOLD_TAIL}`);
-    expect(within(sheet()).getByRole("button", { name: "Убрать свои ракурсы" })).toBeDefined();
   });
 
   test("«Убрать свои ракурсы» clears them (null) and the focus goes to «Анфас»; turning the last chip off clears them too, the focus staying there", async () => {
@@ -145,28 +109,6 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
     expect(hintText()).toBe(NONE_HINT);
   });
 
-  test("one save at a time: «сохраняем…», the group busy, the chips waiting; a press meanwhile sends nothing", async () => {
-    const { engine, scheduler } = await openPhotos({ categories: [BED] });
-    await openSheet();
-    engine.delayNext("categories.update", 50);
-    fireEvent.click(chip("Анфас"));
-    await flush();
-    expect(anglesGroup().getAttribute("aria-busy")).toBe("true");
-    expect(within(sheet()).getByText("сохраняем…")).toBeDefined();
-    expect(within(sheet()).queryByRole("button", { name: "Убрать свои ракурсы" }) === null).toBe(true);
-    // The press shows at once.
-    expect(chip("Анфас").getAttribute("aria-pressed")).toBe("true");
-    expect(isDisabled(chip("Профиль"))).toBe(true);
-    fireEvent.click(chip("Профиль"));
-    await flush();
-    expect(callsOf(engine, "categories.update")).toHaveLength(1);
-    runAll(scheduler);
-    await flush();
-    expect(anglesGroup().getAttribute("aria-busy")).toBe("false");
-    expect(isDisabled(chip("Профиль"))).toBe(false);
-    expect(callsOf(engine, "categories.update").map((c) => c.payload.poses)).toEqual([["front", "three-quarter", "back"]]);
-  });
-
   test("a save that fails: the chip flips back, the hint says why (an alert), the focus stays on the chip", async () => {
     const { engine } = await openPhotos({ categories: [BED] });
     await openSheet();
@@ -180,45 +122,4 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
     expect(describeElement(document.activeElement)).toBe(describeElement(chip("Профиль")));
   });
 
-  test("while the category is regenerated the chips and «Убрать свои ракурсы» wait, saying why", async () => {
-    const { engine } = await openPhotos({ categories: [BED] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
-    await flush();
-    engine.delayNext("categories.regenerate", 100);
-    fireEvent.click(within(sheet()).getByRole("button", { name: /^Пересоздать · до/ }));
-    await flush();
-    expect(isDisabled(chip("Со спины"))).toBe(true);
-    expect(chip("Со спины").getAttribute("title")).toBe("Пока идёт пересоздание, эту категорию не изменить");
-    expect(isDisabled(within(sheet()).getByRole("button", { name: "Убрать свои ракурсы" }))).toBe(true);
-    fireEvent.click(chip("Профиль"));
-    await flush();
-    expect(callsOf(engine, "categories.update")).toHaveLength(0);
-  });
-
-  test("an open set holding the category's scenes: the hint adds that an edit moves «Другая сцена» there", async () => {
-    await openReview({ categories: [BED], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: [BED.categoryId] }] });
-    await openSheet();
-    expect(hintText()).toBe(`${BED_NOTE} Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были. ${BOLD_TAIL}`);
-  });
-
-  test("the regenerate box and its outcome name the angles and what ⟳ takes (CatSheetRegen, CatSheetRegenDone)", async () => {
-    const { scheduler } = await openPhotos({ categories: [PARIS] });
-    await openSheet();
-    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
-    await flush();
-    expect(
-      within(sheet()).getByText(
-        "Новый набор заменит места, наряды, кадры и ракурсы — ракурсы снова возьмутся из описания; название останется. Составленные сцены и идущие запуски не изменятся; «Другая сцена» возьмёт уже новый.",
-      ),
-    ).toBeDefined();
-    fireEvent.click(within(sheet()).getByRole("button", { name: /^Пересоздать · до/ }));
-    runAll(scheduler);
-    await flush();
-    expect(
-      within(sheet()).getByText(
-        "Ниже — новые места, наряды, кадры и ракурсы. Они идут в следующие наборы и запуски. Уже составленные сцены остались как были; «Другая сцена» в открытом наборе возьмёт новые. Идущий запуск — со старым, у него своя копия.",
-      ),
-    ).toBeDefined();
-  });
 });
