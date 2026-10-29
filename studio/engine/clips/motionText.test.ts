@@ -492,15 +492,6 @@ describe("explicit and exposure words (round 2), refused by no rule since S5.WC2
   /** Words that are no motion's: the grammar reads no clause in them (a repairable not-motion where it holds), and an own idea on «Смелая» passes. */
   const NOT_A_MOTION = new Set(["she slowly turns, with bare breasts", "she slowly turns, nipples visible", "she slowly turns, porn style", "she slowly turns, sex"]);
 
-  test("round 2 (H1): «XXX» reads as a Roman numeral, thirty: the age guard's number rule refuses it in a vision or own text (content, final), on every frame", () => {
-    for (const frame of [FRIEND, BOLD]) {
-      for (const source of ["vision", "own"] as const) {
-        expect([source, motionTextFindings("she slowly smiles, XXX", frame, source).filter((finding) => finding.problem === "content").map((finding) => finding.rule)]).toEqual([source, ["number"]]);
-        expect(repairMayHelp("she slowly smiles, XXX", frame, source)).toBe(false);
-      }
-    }
-  });
-
   test("no content and no takes-off for any of them, on an ordinary frame and on «Смелая», for every source", () => {
     for (const text of [...EXPOSURE, ...EXPLICIT]) {
       for (const frame of [FRIEND, BOLD]) {

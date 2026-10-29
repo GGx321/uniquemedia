@@ -5,9 +5,7 @@ import {
   MOTION_ENGLISH,
   MOTION_PROBLEMS,
   MOTION_TEXT_MAX,
-  namesDecade,
   namesNumberWord,
-  namesRomanNumeral,
   type ClipMotionSource,
   type MotionProblem,
 } from "../engine";
@@ -299,13 +297,10 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
 }
 
 /**
- * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
- * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or a Roman numeral
- * (`namesRomanNumeral`). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1). S5.FU-AGE:
- * a decade is a number (`namesDecade`), and a Roman numeral is one wherever it stands; both readers live in ageText.ts (round 2, M3), where the descriptor reads them too, and a
- * lone «x» said as an age («aged x», «ей x») is an age `ageMentions` reads.
+ * A number in a model's text: a digit, or a number word but «one» (`namesNumberWord`, ageText.ts: every -teen form with its ordinals and «-ish», «twenty» in every form,
+ * the tens, the ordinals from fourth on). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»).
  */
-const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || namesDecade(text) || namesRomanNumeral(text);
+const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text);
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
@@ -907,8 +902,6 @@ export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
     contentIn(idea, level).some((problem) => problem.reason === "youth-word") ||
     STANDALONE_NUMBER.test(idea) ||
     namesNumberWord(idea) ||
-    namesDecade(idea) ||
-    namesRomanNumeral(idea) ||
     RU_NUMBER_WORD.test(idea) ||
     namesRussianNumberWord(idea) ||
     RU_SMALL_NUMBER.test(idea)

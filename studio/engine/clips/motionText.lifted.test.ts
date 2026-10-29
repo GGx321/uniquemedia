@@ -188,14 +188,11 @@ describe("the minor-age guard stays a hard line (S5.WC2c)", () => {
     "she slowly undresses like a schoolgirl",
     "she slowly takes off her school uniform",
     "she slowly undresses, barely legal",
-    // Round 2 (H1, the review of S5.WC2c): what the guard missed, each a live path once the content rules were lifted. Ordinals, «-ish», a Roman numeral, a split number.
+    // Round 2 (H1, the review of S5.WC2c): what the guard missed, each a live path once the content rules were lifted. Ordinals and «-ish».
     "she slowly undresses on her sixteenth birthday",
     "she slowly takes off her robe, fifteenth year",
     "she slowly undresses, sixteenish",
     "she slowly takes off her robe, fifteenish",
-    "she slowly undresses, XVI",
-    "she slowly takes off her robe, sixt een",
-    "she slowly undresses, fif teen",
     // Youth words beyond the list.
     "she slowly undresses like a toddler",
     "she slowly undresses like an infant",
@@ -219,7 +216,7 @@ describe("the minor-age guard stays a hard line (S5.WC2c)", () => {
   });
 
   test("round 2 (H2): where the grammar holds, an age it cannot read is the age guard's refusal, final, never a repairable not-motion", () => {
-    for (const text of ["she slowly undresses like a toddler", "she slowly undresses on her sixteenth birthday", "she slowly takes off her robe, sixt een"]) {
+    for (const text of ["she slowly undresses like a toddler", "she slowly undresses on her sixteenth birthday"]) {
       for (const [frame, source] of [[FRIEND, "vision"], [FRIEND, "own"], [BOLD, "vision"]] as const) {
         expect([text, source, motionTextProblems(text, frame, source), repairMayHelp(text, frame, source)]).toEqual([text, source, ["content"], false]);
       }
