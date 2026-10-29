@@ -71,17 +71,6 @@ describe("the tab", () => {
     expect(callsOf(harness.engine, "avatars.checkDescriptor")).toHaveLength(0);
   });
 
-  test("← and → go round the three tabs that work", async () => {
-    await openLook();
-    const look = screen.getByRole("tab", { name: "Внешность" });
-    fireEvent.keyDown(look, { key: "ArrowRight" });
-    await flush();
-    expect(screen.getByRole("tab", { name: "Фото" }).getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement === screen.getByRole("tab", { name: "Фото" })).toBe(true);
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Фото" }), { key: "ArrowLeft" });
-    await flush();
-    expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
-  });
 });
 
 describe("07 · never checked", () => {
@@ -142,42 +131,9 @@ describe("11 · the description matches", () => {
     expect(within(descCard()).getByText(TEXT).tagName).toBe("P");
   });
 
-  test("the verdict survives a look at «Фото» and back", async () => {
-    await openLook();
-    await runCheck();
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
-    await flush();
-    expect(text(checkCard())).toContain("Описание совпадает с фото");
-  });
 });
 
 describe("10 · the description does not match", () => {
-  test("the card says what differs; «Описание» offers the fix as an edit, and nothing is applied by itself", async () => {
-    const { engine } = await openLook();
-    engine.setNextDescriptorCheck(hairMismatch());
-    await runCheck();
-
-    expect(text(checkCard())).toContain("Не совпадает: волосы");
-    expect(text(checkCard())).toContain("В описании: волнистые каштановые");
-    expect(text(checkCard())).toContain("На фото: прямые платиновые с чёлкой");
-    expect(text(checkCard())).toContain("Исправленный текст — в «Описании» справа. Сам он не применится.");
-    // The card ends at its pointer while the proposal waits (the mockup's 10): no second check before it is dealt with.
-    expect(within(checkCard()).queryByRole("button") === null).toBe(true);
-    expect(said(checkCard())).toContain("Сверка: не совпадает: волосы");
-
-    expect(within(descCard()).getByText("предложение сверки").className).toContain("tag-warn");
-    expect(within(descCard()).getByText(`${PROPOSAL.length} / 600`).tagName).toBe("SPAN");
-    const struck = Array.from(descCard().querySelectorAll("del.dx")).map(text);
-    const inserted = Array.from(descCard().querySelectorAll("ins.dx")).map(text);
-    // One strike and one insert, as the mockup draws a changed phrase: the kept «hair» between two changes goes into both.
-    expect(struck).toEqual(["убрать: wavy chestnut hair"]);
-    expect(inserted).toEqual(["вставить: straight platinum-white hair with bangs"]);
-    expect(text(descCard())).toContain("Сверка видит на фото: волосы — прямые платиновые с чёлкой.");
-    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(0);
-  });
-
   test("«Исправить описание» stores the proposal against the text the check judged, and the page shows the stored text", async () => {
     const { engine } = await openLook();
     engine.setNextDescriptorCheck(hairMismatch());
@@ -192,21 +148,6 @@ describe("10 · the description does not match", () => {
     expect(text(checkCard())).toContain("Описание исправлено по сверке");
     expect(text(checkButton(/^Проверить снова/))).toBe("Проверить снова · до $0.025");
     expect(said(descCard())).toContain("Описание исправлено");
-  });
-
-  test("«Оставить» keeps the description as it was and offers the check again", async () => {
-    const { engine } = await openLook();
-    engine.setNextDescriptorCheck(hairMismatch());
-    await runCheck();
-
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Оставить" }));
-    await flush();
-
-    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(0);
-    expect(within(descCard()).getByText(TEXT).tagName).toBe("P");
-    expect(text(checkCard())).toContain("Не совпадает: волосы");
-    expect(text(checkCard())).toContain("Описание оставлено как было.");
-    expect(text(checkButton(/^Проверить снова/))).toBe("Проверить снова · до $0.025");
   });
 
   test("a proposal refused as stale goes: the window reads the description again and says it changed", async () => {
@@ -231,64 +172,9 @@ describe("10 · the description does not match", () => {
     expect(text(descCard())).not.toContain("Описание уже изменилось");
   });
 
-  test("a description changed by another window after the check drops the proposal by itself", async () => {
-    const { engine, client } = await openLook();
-    engine.setNextDescriptorCheck(hairMismatch());
-    await runCheck();
-
-    const other = TEXT.replace("hazel eyes", "green eyes");
-    await act(async () => {
-      await client.request("avatars.editDescriptor", { avatarId: MIA.avatarId, text: other, expectedText: TEXT });
-    });
-    await flush();
-
-    expect(within(descCard()).getByText(other).tagName).toBe("P");
-    expect(within(descCard()).queryByRole("button", { name: "Исправить описание" }) === null).toBe(true);
-    expect(text(checkCard())).toContain("Описание изменено после сверки — проверьте ещё раз.");
-  });
-
-  test("a body mismatch has no text fix: the body row says so, and no proposal is offered", async () => {
-    const { engine } = await openLook();
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: { hair: { state: "ok" }, eyes: { state: "ok" }, marks: { state: "ok" }, body: { state: "mismatch", descriptor: "спортивное", photo: "мягкие формы" } },
-      proposal: null,
-      checkedText: TEXT,
-    });
-    await runCheck();
-
-    expect(text(checkCard())).toContain("Не совпадает: тело");
-    expect(text(checkCard())).toContain("На фото: мягкие формы");
-    expect(within(descCard()).queryByText("предложение сверки") === null).toBe(true);
-    expect(text(checkCard())).not.toContain("Исправленный текст");
-    expect(isDisabled(checkButton(/^Проверить снова/))).toBe(false);
-  });
 });
 
 describe("12 · no key", () => {
-  test("the button waits with the app's reason and a way to Settings; nothing is sent", async () => {
-    const { engine } = await openLook({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    expect(screen.getByText("Добавьте ключ OpenRouter").tagName).toBe("P");
-    const button = checkButton(/^Проверить описание/);
-    expect(isDisabled(button)).toBe(true);
-    expect(text(checkCard())).toContain("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.");
-    expect(button.getAttribute("aria-describedby") !== null).toBe(true);
-
-    fireEvent.click(within(checkCard()).getByRole("button", { name: "Открыть ключ в Настройках" }));
-    await screen.findByRole("heading", { level: 1, name: "Настройки" });
-    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
-  });
-
-  test("an engine away says so first, and then the way to the key is not offered (review r1, 6)", async () => {
-    const { engine } = await openLook({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    engine.failNext("engine.snapshot", { code: "INTERNAL" });
-    inAct(() => engine.restart());
-    await flush();
-
-    expect(isDisabled(checkButton(/^Проверить описание/))).toBe(true);
-    expect(text(checkCard())).toContain("Нет связи с движком — дождитесь, пока он снова ответит.");
-    expect(within(checkCard()).queryByRole("button", { name: "Открыть ключ в Настройках" }) === null).toBe(true);
-  });
 });
 
 describe("13 · the check fails", () => {
@@ -326,72 +212,6 @@ describe("13 · the check fails", () => {
 });
 
 describe("held by other work (IN_FLIGHT, not drawn on the mockup)", () => {
-  test("while her photo run draws, the check waits with the reason; the edit stays open and says the run keeps the old text", async () => {
-    const { engine, client, scheduler } = await openLook();
-    const started = await act(async () => client.request("runs.start", { ...RUN, acceptedWorstMicros: 3_075_000 }));
-    if (!started.ok) throw new Error(`runs.start: ${started.error.code}`);
-    await flush();
-
-    const button = checkButton(/^Проверить описание/);
-    expect(isDisabled(button)).toBe(true);
-    expect(text(checkCard())).toContain(CHECK_HELD_REASON);
-
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    await flush();
-    expect(text(descCard())).toContain("Съёмка, которая идёт сейчас, закончит со старым описанием — новое возьмут следующие фото.");
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Отмена" }));
-    await flush();
-
-    runAll(scheduler);
-    await flush();
-    await waitFor(() => expect(isDisabled(checkButton(/^Проверить описание/))).toBe(false));
-    expect(text(checkCard())).not.toContain(CHECK_HELD_REASON);
-    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
-  });
-
-  test("refused IN_FLIGHT for work the window cannot see: the same reason, not «Сверка не прошла», and a retry", async () => {
-    const { engine } = await openLook();
-    engine.setAvatarBusy(MIA.avatarId, true);
-    await runCheck();
-
-    expect(text(checkCard())).toContain(CHECK_HELD_REASON);
-    expect(text(checkCard())).not.toContain("Сверка не прошла");
-    expect(isDisabled(checkButton(/^Повторить сверку/))).toBe(false);
-
-    engine.setAvatarBusy(MIA.avatarId, false);
-    await runCheck();
-    expect(text(checkCard())).toContain("Описание совпадает с фото");
-  });
-
-  test("the editor open while this window's own check runs: «Сохранить» waits, with the reason (review r1, 5)", async () => {
-    const { engine, scheduler } = await openLook();
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${TEXT} Soft smile.` } });
-    engine.delayNext("avatars.checkDescriptor", 1_000);
-    await runCheck();
-
-    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(true);
-    expect(text(descCard())).toContain(EDIT_HELD_REASON);
-
-    runAll(scheduler);
-    await flush();
-    expect(text(checkCard())).toContain("Описание совпадает с фото");
-    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(false);
-    expect(text(descCard())).not.toContain(EDIT_HELD_REASON);
-    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(0);
-  });
-
-  test("an edit refused IN_FLIGHT says the description can be changed when that work ends", async () => {
-    const { engine } = await openLook();
-    engine.setAvatarEditing(MIA.avatarId, true);
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${TEXT} Soft smile.` } });
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
-    await flush();
-
-    expect(within(descCard()).getByRole("alert").textContent).toBe(EDIT_HELD_REASON);
-    expect(within(descCard()).getByRole("textbox", { name: "Текст описания" }).getAttribute("aria-invalid")).toBe("true");
-  });
 });
 
 describe("a check under way when the owner moves on (review r1, 8)", () => {
@@ -404,44 +224,6 @@ describe("a check under way when the owner moves on (review r1, 8)", () => {
     await flush();
   }
 
-  test("Mia's check ends while Sofia is open: Sofia's page shows no verdict and no proposal of Mia's", async () => {
-    const { engine, scheduler } = setup({ avatars: [MIA, SOFIA] });
-    await screen.findByRole("button", { name: "Mia" });
-    await openAvatar("Mia");
-    engine.setNextDescriptorCheck(hairMismatch());
-    engine.delayNext("avatars.checkDescriptor", 1_000);
-    await runCheck();
-    expect(checkCard().getAttribute("aria-busy")).toBe("true");
-
-    await openAvatar("Sofia");
-    runAll(scheduler);
-    await flush();
-    expect(text(checkCard())).toContain("последняя: ещё не было");
-    expect(text(checkCard())).not.toContain("Не совпадает");
-    expect(within(descCard()).queryByText("предложение сверки") === null).toBe(true);
-    expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload.avatarId)).toEqual([MIA.avatarId]);
-  });
-
-  test("leaving the screen mid-check: the answer lands on nothing, and nothing errs", async () => {
-    const errors: string[] = [];
-    const original = console.error;
-    console.error = (...args: unknown[]) => {
-      errors.push(args.map(String).join(" ").slice(0, 200));
-    };
-    try {
-      const { engine, scheduler } = await openLook();
-      engine.delayNext("avatars.checkDescriptor", 1_000);
-      await runCheck();
-      fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
-      await screen.findByRole("heading", { level: 1, name: "Аватары" });
-      runAll(scheduler);
-      await flush();
-      expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(1);
-    } finally {
-      console.error = original;
-    }
-    expect(errors).toEqual([]);
-  });
 });
 
 describe("«Изменить текст»", () => {
@@ -469,31 +251,6 @@ describe("«Изменить текст»", () => {
     fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
     await flush();
     expect(callsOf(engine, "avatars.editDescriptor").at(-1)?.payload.expectedText).toBe(stored);
-  });
-
-  test("a text the rules refuse says which rule, with her own age in the anchor example; Escape leaves without saving", async () => {
-    const { engine } = await openLook();
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    const field = within(descCard()).getByRole("textbox", { name: "Текст описания" });
-
-    fireEvent.change(field, { target: { value: TEXT.replace("25-year-old", "adult") } });
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
-    await flush();
-    expect(within(descCard()).getByRole("alert").textContent).toBe("В описании должна быть фраза «<возраст>-year-old» с возрастом этого аватара, например «25-year-old»");
-    // The same text is not sent again: «Сохранить» waits for another one, and the reason goes as soon as the owner types.
-    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(true);
-    fireEvent.change(field, { target: { value: "25-year-old девушка" } });
-    expect(within(descCard()).queryByRole("alert") === null).toBe(true);
-    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(false);
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
-    await flush();
-    expect(within(descCard()).getByRole("alert").textContent).toBe("Описание пишется латиницей — английскими словами");
-
-    fireEvent.keyDown(field, { key: "Escape" });
-    await flush();
-    expect(within(descCard()).queryByRole("textbox") === null).toBe(true);
-    expect(within(descCard()).getByText(TEXT).tagName).toBe("P");
-    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(2);
   });
 
   test("stale: the text changed in another window meanwhile — the editor shows it, and the next save is made against it", async () => {

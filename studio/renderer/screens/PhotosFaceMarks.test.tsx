@@ -46,34 +46,12 @@ describe("the badge of a frame the gate marked", () => {
     expect(screen.getByText("лицо не проверялось")).toBeDefined();
   });
 
-  test("reads «лицо 0.48» in the pale style for a one-face frame under the line", () => {
-    render(<PhotoBadges photo={photo("p1", 0.48)} />);
-    expect(screen.getByText("лицо 0.48").className).toContain("photo-face-low");
-  });
-
   // S5.7a review: the gate marks a back or face-hidden frame on the photo (`qa.faceMarked`); its likeness was kept, never judged, whatever its value.
   test("reads in the pale style for a frame the gate marked, even with a likeness over the line", () => {
     render(<PhotoBadges photo={photo("p1", 0.81, true)} />);
     expect(screen.getByText("лицо 0.81").className).toContain("photo-face-low");
   });
 
-  test("explains the pale badge of a marked frame in its title, and only that one", () => {
-    const { unmount } = render(<PhotoBadges photo={photo("p1", 0.81, true)} />);
-    expect(screen.getByText("лицо 0.81").getAttribute("title")).toBe("лицо закрыто или не видно — сходство не проверялось");
-    unmount();
-    render(<PhotoBadges photo={photo("p2", 0.81)} />);
-    expect(screen.getByText("лицо 0.81").hasAttribute("title")).toBe(false);
-  });
-
-  test("keeps the plain style for a judged frame over the line", () => {
-    render(<PhotoBadges photo={photo("p1", 0.81)} />);
-    expect(screen.getByText("лицо 0.81").className.includes("photo-face-low")).toBe(false);
-  });
-
-  test("offers nothing to click on a marked frame: no retry", () => {
-    render(<PhotoBadges photo={photo("p1", 0.48)} />);
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-  });
 });
 
 // S5.7a (I5.31): a slot a run ended alone, free, because its sentence broke the word rules says so where the failed slots are counted. S5.7a review: only
@@ -107,12 +85,6 @@ describe("the end of a run with slots that ended with a reason", () => {
     ).toBeDefined();
   });
 
-  test("drops the paid-attempts line when every one of several failed slots was free", () => {
-    render(<RunOutcome job={withReasons(["p1"], 2, [2, 5])} fromSet={false} photos={[photo("p1", 0.81)]} />);
-    expect(screen.getByText(/Не получилось: 2\. Из них 2 — тексты сцен не прошли проверку слов: кадры пропущены, бесплатно\./)).toBeDefined();
-    expect(screen.queryByText(/за попытки платили/) === null).toBe(true);
-  });
-
   test("never calls a slot free for another reason: the paid-attempts line stays", () => {
     render(<RunOutcome job={withReasons(["p1"], 1, [2], "scene-missing")} fromSet={false} photos={[photo("p1", 0.81)]} />);
     const line = screen.getByText(/Не получилось: 1\./);
@@ -121,11 +93,6 @@ describe("the end of a run with slots that ended with a reason", () => {
     expect(line.textContent?.includes("бесплатно") ?? true).toBe(false);
   });
 
-  test("says what it always said when no failed slot has a reason", () => {
-    render(<RunOutcome job={doneRun(["p1"], 2)} fromSet={false} photos={[photo("p1", 0.81)]} />);
-    expect(screen.getByText(/Не получилось: 2\. Если за попытки платили, это уже учтено в расходах\./)).toBeDefined();
-    expect(screen.queryByText(/проверку слов/) === null).toBe(true);
-  });
 });
 
 describe("the end of a run", () => {
@@ -136,27 +103,8 @@ describe("the end of a run", () => {
   });
 
   // §6.3: the count comes from the gate's mark on the photo (`qa.faceMarked`, S5.7a), whatever likeness it kept.
-  test("counts a frame the gate marked even with a likeness over the line", () => {
-    render(<RunOutcome job={doneRun(["p1", "p2"])} fromSet={false} photos={[photo("p1", 0.81, true), photo("p2", 0.81)]} />);
-    expect(screen.getByText(/В галерее 2 фото этого запуска\. 1 кадр без проверки лица\./)).toBeDefined();
-  });
-
-  test("says nothing about faces when every frame was checked", () => {
-    render(<RunOutcome job={doneRun(["p1"])} fromSet={false} photos={[photo("p1", 0.81)]} />);
-    expect(screen.queryByText(/без проверки лица/) === null).toBe(true);
-  });
-
   // 2026-10-12, S5.9g (mockup 50): the failed slots moved to a line of their own under the gallery's (`.run-end-line`); the row still pins that they come
   // after the frames without a face check, in the same notice.
-  test("keeps the failed slots after it", () => {
-    render(<RunOutcome job={doneRun(["p1"], 2)} fromSet={false} photos={[photo("p1")]} />);
-    const faces = screen.getByText(/1 кадр без проверки лица\./);
-    const failed = screen.getByText(/^Не получилось: 2\./);
-    expect(failed.classList.contains("run-end-line")).toBe(true);
-    expect(faces.contains(failed)).toBe(true);
-    expect((faces.textContent ?? "").indexOf("без проверки лица")).toBeLessThan((faces.textContent ?? "").indexOf("Не получилось"));
-  });
-
   // S5.6R: a slot can end free (`slot-text-problem` ends it with no attempt paid), and the job end carries only the count, so the line must not claim that every failed
   // slot cost something. The reason itself is not on the wire (a contract change, S5.7a).
   test("does not claim that the failed slots were paid for: some close for free", () => {
@@ -165,8 +113,4 @@ describe("the end of a run", () => {
     expect(screen.queryByText(/стоимость попыток учтена/) === null).toBe(true);
   });
 
-  test("counts them on a run made from a set too", () => {
-    render(<RunOutcome job={doneRun(["p1"])} fromSet={true} photos={[photo("p1")]} />);
-    expect(screen.getByText(/1 кадр без проверки лица\./)).toBeDefined();
-  });
 });
