@@ -65,6 +65,22 @@ describe("the panel", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(myCategories()));
   });
 
+  test("× removes it; the focus goes to the × of the next row", async () => {
+    const { engine } = await openPhotos({ categories: [PARIS] });
+    await openSheet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать место: sidewalk cafe terrace" }));
+    await flush();
+    expect(callsOf(engine, "categories.update").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId, removeLocations: ["sidewalk cafe terrace"] }]);
+    expect(within(sheet()).queryByText("sidewalk cafe terrace") === null).toBe(true);
+    expect(within(sheet()).getByText("Места · 5")).toBeDefined();
+    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Убрать место: bookshop by the river" })));
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать наряд: navy knit cardigan and midi skirt" }));
+    await flush();
+    expect(callsOf(engine, "categories.update").at(-1)?.payload).toEqual({ categoryId: PARIS.categoryId, removeOutfits: ["navy knit cardigan and midi skirt"] });
+    // The last outfit went: the focus goes to the one before.
+    expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Убрать наряд: white blouse, high-waisted jeans" })));
+  });
+
 });
 
 // S5.5: a created category whose description asked for what the pool generator will not draw says so on its card (it came out in everyday clothes).
