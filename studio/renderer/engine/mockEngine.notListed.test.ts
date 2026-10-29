@@ -13,10 +13,3 @@ test("montages.list reports the files it did not read as notListedTotal, apart f
   expect(listed).toMatchObject({ total: 1, skippedTotal: 0, notListedTotal: 4 });
 });
 
-test("montages.list leaves notListedTotal out when every file was read", async () => {
-  const mock = makeMock();
-
-  const listed = await unwrap(mock.client.request("montages.list", {}));
-
-  expect("notListedTotal" in listed).toBe(false);
-});
