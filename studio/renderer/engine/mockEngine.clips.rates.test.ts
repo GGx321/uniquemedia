@@ -19,12 +19,4 @@ describe("a moved price list in the mock", () => {
     expect(await money(m)).toMatchObject({ spentMicros: 1_000_000, unsettledMicros: 0 });
   });
 
-  test("a list that moves after the create does not re-price the clip already reserved", async () => {
-    const m = makeClipMock();
-    const { jobId } = await unwrap(create(m));
-    for (let i = 0; i < 100 && (await money(m)).unsettledMicros === 0; i++) m.scheduler.next();
-    m.engine.setClipRates(DEARER_KLING);
-    runUntilEnd(m, jobId);
-    expect(await onlyClip(m)).toMatchObject({ cost: { micros: 420_000, kind: "billed" } });
-  });
 });

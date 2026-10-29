@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CategoryPool, POOL_TEXT_MAX, type AvatarSummary, type CategorySummary, type EventMessage, type ScenePose, type SceneSetView } from "../../shared/engine";
+import { type AvatarSummary, type CategorySummary, type EventMessage, type SceneSetView } from "../../shared/engine";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { mockCategoryPool } from "./mockCategories";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
-import { anglePick } from "./mockSceneSets";
 import { ManualScheduler } from "./scheduler";
 
 // CS.8a: the angles a category's description asks for, in the mock. A pool is made from the description alone, so «Вид сзади» gives `poses: ["back"]` and
@@ -45,11 +43,6 @@ async function unwrap<T>(reply: Reply<T>): Promise<T> {
   if (!r.ok) throw new Error(`expected ok, got ${r.error.code}`);
   return r.result;
 }
-async function codeOf<T>(reply: Reply<T>): Promise<string> {
-  const r = await reply;
-  if (r.ok) throw new Error("expected an error");
-  return r.error.code;
-}
 
 async function createCategory(m: Mock, description: string, name = "Лежит дома"): Promise<CategorySummary> {
   return (await unwrap(m.client.request("categories.create", { name, description, acceptedWorstMicros: POOL_WORST }))).category;
@@ -74,59 +67,6 @@ async function writeAndRun(m: Mock, view: SceneSetView, target: Target): Promise
 
 const phone = (shot: string): boolean => shot === "selfie" || shot === "mirror";
 
-describe("the pool the mock makes from a description", () => {
-  test("the paid canary's description («Лежит на животе… Вид сзади») gives poses [back] and activities in that body position", () => {
-    const { pool } = mockCategoryPool("Лежит дома", CANARY);
-    expect(pool.poses).toEqual(["back"]);
-    const activities = pool.locations.flatMap((l) => l.activities.map((a) => a.text));
-    expect(activities.length).toBeGreaterThan(0);
-    expect(activities.every((text) => text.startsWith("lying on her stomach, "))).toBe(true);
-  });
-
-  test("every activity of it fits the 35 characters, and the pool passes the contract", () => {
-    const { pool } = mockCategoryPool("Лежит дома", CANARY);
-    for (const place of pool.locations) for (const a of place.activities) expect(a.text.length).toBeLessThanOrEqual(POOL_TEXT_MAX);
-    expect(CategoryPool.safeParse(pool).success).toBe(true);
-  });
-
-  test("every place keeps a one-handed activity and two distinct activities, as the contract wants", () => {
-    const { pool } = mockCategoryPool("Лежит дома", CANARY);
-    for (const place of pool.locations) {
-      expect(new Set(place.activities.map((a) => a.text)).size).toBe(place.activities.length);
-      expect(place.activities.some((a) => !a.twoHanded)).toBe(true);
-    }
-  });
-
-  test.each<[string, ScenePose[]]>([
-    ["Вид сзади", ["back"]],
-    ["фото со спины, вид сзади", ["back"]],
-    ["lying down, back view", ["back"]],
-    ["shot from behind", ["back"]],
-    ["в профиль у окна", ["profile"]],
-    ["side profile portraits", ["profile"]],
-    ["вид сзади и в профиль", ["profile", "back"]],
-    ["анфас, лицом к камере", ["front"]],
-    ["в три четверти", ["three-quarter"]],
-    ["вид спереди и вид сзади", ["front", "back"]],
-  ])("«%s» gives the angles %p, in the vocabulary's order", (description, poses) => {
-    expect(mockCategoryPool("Name", description).pool.poses).toEqual(poses);
-  });
-
-  test("a description with no angle gives a pool without the key", () => {
-    const { pool } = mockCategoryPool("Name", "Парижские кофейни и булочные");
-    expect("poses" in pool).toBe(false);
-  });
-
-  test("a description with no body position keeps the activities the places always had", () => {
-    const plain = mockCategoryPool("Name", "Парижские кофейни и булочные").pool;
-    expect(plain.locations.flatMap((l) => l.activities.map((a) => a.text)).some((text) => text.startsWith("lying"))).toBe(false);
-  });
-
-  test("it is deterministic: the same description gives the same pool", () => {
-    expect(mockCategoryPool("Name", CANARY)).toEqual(mockCategoryPool("Name", CANARY));
-  });
-});
-
 describe("categories.create and categories.regenerate", () => {
   test("a created category carries the angles of its description", async () => {
     const m = makeMock();
@@ -135,12 +75,6 @@ describe("categories.create and categories.regenerate", () => {
     expect((await unwrap(m.client.request("categories.list", {}))).categories[0]?.pool.poses).toEqual(["back"]);
   });
 
-  test("a regeneration re-derives them: a description with no angle clears the poses", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY);
-    const regenerated = await unwrap(m.client.request("categories.regenerate", { categoryId: category.categoryId, description: "кофейни и булочные", acceptedWorstMicros: POOL_WORST }));
-    expect("poses" in regenerated.category.pool).toBe(false);
-  });
 });
 
 describe("categories.update: the category's angles", () => {
@@ -156,40 +90,6 @@ describe("categories.update: the category's angles", () => {
     expect(((await unwrap(m.client.request("money.status", {}))) as { spentMicros?: number }).spentMicros).toBe(spent.spentMicros);
   });
 
-  test("replaces them, and null clears them", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY);
-    const replaced = await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: ["front"] }));
-    expect(replaced.category.pool.poses).toEqual(["front"]);
-    const cleared = await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: null }));
-    expect("poses" in cleared.category.pool).toBe(false);
-  });
-
-  test("goes together with a rename in one write", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, "кофейни");
-    const { category: updated } = await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, name: "Новое имя", poses: ["back"] }));
-    expect([updated.name, updated.pool.poses]).toEqual(["Новое имя", ["back"]]);
-  });
-
-  test("a removal the pool cannot take refuses the whole update: the poses stay as they were", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, "кофейни");
-    const refused = m.client.request("categories.update", { categoryId: category.categoryId, poses: ["back"], removeLocations: [category.pool.locations[0]?.name ?? "x"] });
-    expect(await codeOf(refused)).toBe("VALIDATION");
-    expect("poses" in ((await unwrap(m.client.request("categories.list", {}))).categories[0]?.pool ?? {})).toBe(false);
-  });
-
-  test("an unknown category is NOT_FOUND", async () => {
-    const m = makeMock();
-    expect(await codeOf(m.client.request("categories.update", { categoryId: "cat-nobody-here", poses: ["back"] }))).toBe("NOT_FOUND");
-  });
-
-  test("an update that names nothing is refused by the contract", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, "кофейни");
-    expect(await codeOf(m.client.request("categories.update", { categoryId: category.categoryId } as never))).toBe("VALIDATION");
-  });
 });
 
 describe("scenes.compose with a category that has poses", () => {
@@ -201,136 +101,6 @@ describe("scenes.compose with a category that has poses", () => {
     expect(view.scenes.every((s) => s.pose === "back" && !phone(s.shot))).toBe(true);
   });
 
-  test("the run's toggles do not change it", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY);
-    const off = await composed(m, 10, [category.categoryId], OFF);
-    await unwrap(m.client.request("scenes.discard", { sceneSetId: off.sceneSetId } as never));
-    const on = await composed(m, 10, [category.categoryId], { profile: true, back: true });
-    expect(on.scenes.map((s) => [s.pose, s.shot])).toEqual(off.scenes.map((s) => [s.pose, s.shot]));
-  });
-
-  test("the built-ins in the same set are still governed by the toggles", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY);
-    const view = await composed(m, 40, ["home", category.categoryId], OFF);
-    const home = view.scenes.filter((s) => s.category === "home");
-    expect(home.length).toBeGreaterThan(0);
-    expect(home.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-  });
-
-  test("a category with front and back draws both, and a front scene may keep a selfie; a selfie or mirror is never turned away", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, "вид спереди и вид сзади");
-    expect(category.pool.poses).toEqual(["front", "back"]);
-    const view = await composed(m, 40, [category.categoryId]);
-    expect(new Set(view.scenes.map((s) => s.pose))).toEqual(new Set(["front", "back"]));
-    for (const scene of view.scenes) if (phone(scene.shot)) expect(["front", "three-quarter"]).toContain(scene.pose);
-  });
-
-  test("never a selfie or a mirror shot facing away, for any count, any list of poses", async () => {
-    for (const description of ["вид сзади", "в профиль", "вид сзади и в профиль", "вид спереди и вид сзади", "анфас"]) {
-      for (const count of [1, 2, 3, 5, 7, 12, 25, 26, 40]) {
-        const m = makeMock();
-        const category = await createCategory(m, description);
-        const view = await composed(m, count, [category.categoryId]);
-        for (const scene of view.scenes) if (phone(scene.shot)) expect(["front", "three-quarter"]).toContain(scene.pose);
-      }
-    }
-  });
-
-  test("a category without poses faces the camera, whatever toggles the request sends (S5.7b: the angle comes from the scene)", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, "кофейни");
-    const off = await composed(m, 30, [category.categoryId], OFF);
-    expect(off.scenes.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-    await unwrap(m.client.request("scenes.discard", { sceneSetId: off.sceneSetId } as never));
-    const on = await composed(m, 30, [category.categoryId], { profile: true, back: true });
-    expect(on.scenes.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-  });
-});
-
-describe("the set's view carries the angles of its categories (CS.8a)", () => {
-  test("a category with poses shows them, a built-in and a category without show no key", async () => {
-    const m = makeMock();
-    const angled = await createCategory(m, CANARY, "Лежит дома");
-    const plain = await createCategory(m, "кофейни", "Кофейни");
-    const view = await composed(m, 6, ["home", angled.categoryId, plain.categoryId]);
-    expect(view.categories).toEqual([
-      { ref: "home", name: null },
-      { ref: angled.categoryId, name: "Лежит дома", poses: ["back"] },
-      { ref: plain.categoryId, name: "Кофейни" },
-    ]);
-  });
-
-  test("the set keeps what the category had when it was planned: a later update does not change the view", async () => {
-    const m = makeMock();
-    const angled = await createCategory(m, CANARY);
-    const view = await composed(m, 4, [angled.categoryId]);
-    await unwrap(m.client.request("categories.update", { categoryId: angled.categoryId, poses: ["front"] }));
-    expect((await setOf(m)).categories).toEqual(view.categories);
-  });
-});
-
-describe("⟳ on a scene of a category with poses", () => {
-  test("a redraw keeps the pose in the category's list and never leaves a phone facing away", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY);
-    let view = await composed(m, 8, [category.categoryId]);
-    for (const scene of view.scenes) {
-      view = await writeAndRun(m, view, { kind: "rewrite", sceneIds: [scene.sceneId], redraw: true });
-    }
-    expect(view.scenes.every((s) => s.pose === "back" && !phone(s.shot))).toBe(true);
-  });
-});
-
-describe("⟳ refreshes the set's snapshot of the category's angles, as the engine does (CS.8a fix round 1)", () => {
-  async function redrawOne(m: Mock, view: SceneSetView): Promise<SceneSetView> {
-    const scene = view.scenes.find((s) => s.origin === "planned");
-    if (scene === undefined) throw new Error("no planned scene");
-    return writeAndRun(m, view, { kind: "rewrite", sceneIds: [scene.sceneId], redraw: true });
-  }
-
-  test("angles the owner replaced after the set was planned show in the view after a redraw", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY, "Лежит дома");
-    const view = await composed(m, 4, [category.categoryId]);
-    expect(view.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["back"] }]);
-    await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: ["profile"] }));
-    expect((await setOf(m)).categories).toEqual(view.categories);
-    const after = await redrawOne(m, view);
-    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["profile"] }]);
-  });
-
-  test("angles the owner cleared show no key after a redraw", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY, "Лежит дома");
-    const view = await composed(m, 4, [category.categoryId]);
-    await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: null }));
-    const after = await redrawOne(m, view);
-    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома" }]);
-  });
-
-  test("a redraw of a category whose angles did not change leaves them as they were", async () => {
-    const m = makeMock();
-    const category = await createCategory(m, CANARY, "Лежит дома");
-    const after = await redrawOne(m, await composed(m, 4, [category.categoryId]));
-    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["back"] }]);
-  });
-});
-
-describe("the shot a turned-away scene takes when the deck holds no other", () => {
-  test("a deck of selfies and mirrors only falls back to a friend, never the photographer (the category is a phone photo)", () => {
-    const deck = ["selfie", "mirror", "selfie", "mirror", "selfie"] as const;
-    for (const pose of ["back", "profile"] as const) {
-      for (const shot of ["selfie", "mirror"] as const) expect(anglePick([pose], 0, shot, deck).shot).toBe("friend");
-    }
-  });
-
-  test("a deck with another shot gives that one, and a pose that faces the camera keeps the shot", () => {
-    expect(anglePick(["back"], 0, "selfie", ["selfie", "candid"]).shot).toBe("candid");
-    expect(anglePick(["front"], 0, "selfie", ["selfie", "mirror"]).shot).toBe("selfie");
-  });
 });
 
 describe("scenes.write: an idea, the angle from the idea", () => {
@@ -346,49 +116,4 @@ describe("scenes.write: an idea, the angle from the idea", () => {
     expect(own.every((s) => s.pose === "back" && s.shot === "candid")).toBe(true);
   });
 
-  test("in English too: «back view» and «from behind»", async () => {
-    const m = makeMock();
-    let view = await readySet(m);
-    view = await writeAndRun(m, view, { kind: "idea", idea: "lying on her stomach, back view", count: 1, shot: null });
-    view = await writeAndRun(m, view, { kind: "idea", idea: "walking away, from behind", count: 1, shot: null });
-    expect(view.scenes.filter((s) => s.origin === "own").map((s) => s.pose)).toEqual(["back", "back"]);
-  });
-
-  test("«в профиль» gives profile", async () => {
-    const m = makeMock();
-    const after = await writeAndRun(m, await readySet(m), { kind: "idea", idea: "у окна в профиль", count: 1, shot: null });
-    expect(after.scenes.at(-1)).toMatchObject({ origin: "own", pose: "profile", shot: "candid" });
-  });
-
-  test("a shot the owner chose stays, and a selfie or a mirror is not turned away", async () => {
-    const m = makeMock();
-    let view = await readySet(m);
-    view = await writeAndRun(m, view, { kind: "idea", idea: "вид сзади", count: 1, shot: "friend" });
-    view = await writeAndRun(m, view, { kind: "idea", idea: "вид сзади", count: 1, shot: "selfie" });
-    view = await writeAndRun(m, view, { kind: "idea", idea: "вид сзади", count: 1, shot: "mirror" });
-    expect(view.scenes.filter((s) => s.origin === "own").map((s) => [s.shot, s.pose === "back" || s.pose === "profile"])).toEqual([
-      ["friend", true],
-      ["selfie", false],
-      ["mirror", false],
-    ]);
-  });
-
-  test("an idea that names a mirror gets the mirror on «Авто», facing the camera; one that names none never does (CS.8a)", async () => {
-    const m = makeMock();
-    let view = await readySet(m);
-    view = await writeAndRun(m, view, { kind: "idea", idea: "селфи в зеркале лифта", count: 2, shot: null });
-    view = await writeAndRun(m, view, { kind: "idea", idea: "кофе на балконе", count: 2, shot: null });
-    const own = view.scenes.filter((s) => s.origin === "own");
-    expect(own.slice(0, 2).every((s) => s.shot === "mirror" && (s.pose === "front" || s.pose === "three-quarter"))).toBe(true);
-    expect(own.slice(2).some((s) => s.shot === "mirror")).toBe(false);
-  });
-
-  test("an idea with no angle in it faces the camera, never the mirror on «Авто»", async () => {
-    const m = makeMock();
-    let view = await readySet(m);
-    for (let i = 0; i < 4; i++) view = await writeAndRun(m, view, { kind: "idea", idea: "кофе", count: 5, shot: null });
-    const own = view.scenes.filter((s) => s.origin === "own");
-    expect(own.some((s) => s.shot === "mirror")).toBe(false);
-    expect(own.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-  });
 });

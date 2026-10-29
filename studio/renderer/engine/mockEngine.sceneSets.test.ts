@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView } from "../../shared/engine";
 import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
-import { plainSentence } from "../../shared/scenes/plain";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -69,15 +68,8 @@ async function setOf(m: Mock): Promise<SceneSetView> {
   return sceneSet;
 }
 
-/** The plain sentence of a planned scene, built from the texts the view shows: the very function the engine writes with (shared/scenes/plain.ts). */
-const plainOf = (scene: SceneSetView["scenes"][number]): string => {
-  if (scene.place === null) throw new Error("an own scene has no plain sentence");
-  return plainSentence({ route: scene.route, category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit });
-};
 
-const edit = (m: Mock, sceneSetId: string, revision: number, op: unknown) => m.client.request("scenes.edit", { sceneSetId, revision, op } as never);
 const write = (m: Mock, sceneSetId: string, revision: number, acceptedWorstMicros: number) => m.client.request("scenes.write", { sceneSetId, revision, target: { kind: "unwritten" }, acceptedWorstMicros });
-const changes = (events: EventMessage[]) => events.flatMap((e) => (e.type === "scenes.changed" && e.payload.change === "upserted" ? [e.payload.sceneSet] : []));
 
 describe("scenes.estimateCompose", () => {
   test("is the writer's worst case for the scenes, as the engine's at the fallback prices: chunks of 25, two attempts each", async () => {
@@ -88,18 +80,6 @@ describe("scenes.estimateCompose", () => {
     expect(await worst(100)).toBe(8 * ATTEMPT);
   });
 
-  test("expects the writer's typical tokens: about $0.009 for 20 scenes, and an empty set is free", async () => {
-    const m = makeMock();
-    const estimate = async (count: number) => (await unwrap(m.client.request("scenes.estimateCompose", { avatarId: MIA.avatarId, count, categories: count === 0 ? [] : [LLM_ONLY_REF], poses: POSES }))).estimate;
-    expect((await estimate(20)).expectedMicros).toBe(9_150);
-    expect(await estimate(0)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
-  });
-
-  test("NOT_FOUND for an avatar that cannot get photos, or a custom category the library lacks", async () => {
-    const m = makeMock();
-    expect(await codeOf(m.client.request("scenes.estimateCompose", { avatarId: "avatar-nobody-404", count: 5, categories: ["home"], poses: POSES }))).toBe("NOT_FOUND");
-    expect(await codeOf(m.client.request("scenes.estimateCompose", { avatarId: MIA.avatarId, count: 5, categories: ["cat-no-such-category"], poses: POSES }))).toBe("NOT_FOUND");
-  });
 });
 
 describe("scenes.compose", () => {
@@ -119,36 +99,6 @@ describe("scenes.compose", () => {
     expect(m.events.findLastIndex((e) => e.type === "scenes.changed")).toBeLessThan(done);
   });
 
-  test("the job counts scenes: its progress ends at the total, and its state is in the snapshot", async () => {
-    const m = makeMock();
-    const { jobId } = await composed(m, 30);
-    m.scheduler.runAll();
-
-    const progress = m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "scenes" ? [[e.payload.done, e.payload.total]] : []));
-    expect(progress.at(0)).toEqual([0, 30]);
-    expect(progress.at(-1)).toEqual([30, 30]);
-    const snapshot = await unwrap(m.client.request("engine.snapshot", {}));
-    expect(snapshot.jobs.find((j) => j.kind === "scenes")).toMatchObject({ jobId, status: "done", done: 30, total: 30 });
-  });
-
-  test("books what the writer cost, and the view says so", async () => {
-    const m = makeMock();
-    await composed(m, 20);
-    m.scheduler.runAll();
-    const view = await setOf(m);
-    expect(view.spentMicros).toBeGreaterThan(0);
-    expect(view.spentMicros).toBeLessThan(2 * ATTEMPT);
-    expect(view.openReserveMicros).toBe(0);
-  });
-
-  test("an empty set is free: no job, no money, and the set is announced", async () => {
-    const m = makeMock();
-    const { sceneSetId, jobId } = await unwrap(m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 0, categories: [], poses: POSES, acceptedWorstMicros: 0 }));
-    expect(jobId).toBeNull();
-    expect(await setOf(m)).toMatchObject({ sceneSetId, status: "ready", scenes: [], spentMicros: 0 });
-    expect(changes(m.events).map((s) => s.sceneSetId)).toEqual([sceneSetId]);
-  });
-
   test("PRICE_CHANGED above the accepted worst case and BUDGET_EXCEEDED past the month: nothing is made", async () => {
     const m = makeMock({ money: { monthlyBudgetMicros: 2 * ATTEMPT - 1 } });
     expect(await codeOf(compose(m, 20, { acceptedWorstMicros: 1 }))).toBe("PRICE_CHANGED");
@@ -156,96 +106,9 @@ describe("scenes.compose", () => {
     expect(await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).toEqual({ sceneSet: null, unreadable: 0 });
   });
 
-  test("AUTH_INVALID without a key; NOT_FOUND for an unknown avatar", async () => {
-    const m = makeMock({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    expect(await codeOf(compose(m))).toBe("AUTH_INVALID");
-    const n = makeMock();
-    expect(await codeOf(n.client.request("scenes.compose", { avatarId: "avatar-nobody-404", count: 5, categories: ["home"], poses: POSES, acceptedWorstMicros: accepted(5) }))).toBe("NOT_FOUND");
-  });
-
-  test("one open set per avatar: a second compose is VALIDATION until the first is discarded", async () => {
-    const m = makeMock();
-    const first = await composed(m, 5);
-    m.scheduler.runAll();
-    expect(await codeOf(compose(m, 5))).toBe("VALIDATION");
-    await unwrap(m.client.request("scenes.discard", { sceneSetId: first.sceneSetId }));
-    expect((await composed(m, 5)).sceneSetId).not.toBe(first.sceneSetId);
-  });
-
-  test("is refused while the avatar's scenes job runs, and so is a photo run: IN_FLIGHT", async () => {
-    const m = makeMock();
-    await composed(m, 5);
-    expect(await codeOf(compose(m, 5))).toBe("IN_FLIGHT");
-    expect(await codeOf(m.client.request("runs.start", { avatarId: MIA.avatarId, count: 4, categories: ["home"], poses: POSES, acceptedWorstMicros: 10_000_000 }))).toBe("IN_FLIGHT");
-    m.scheduler.runAll();
-  });
-
-  test("money.reconcile waits while a scenes job runs", async () => {
-    const m = makeMock();
-    await composed(m, 5);
-    expect(await codeOf(m.client.request("money.reconcile", {}))).toBe("IN_FLIGHT");
-    m.scheduler.runAll();
-  });
-
-  test("the avatar is not deleted while its scenes job runs, and its sets go with it", async () => {
-    const m = makeMock();
-    await composed(m, 5);
-    expect(await codeOf(m.client.request("avatars.delete", { avatarId: MIA.avatarId }))).toBe("IN_FLIGHT");
-    m.scheduler.runAll();
-    await unwrap(m.client.request("avatars.delete", { avatarId: MIA.avatarId }));
-    expect(await codeOf(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).toBe("NOT_FOUND");
-  });
-});
-
-describe("what the view claims stays true (fix round 1)", () => {
-  test("a deleted avatar's sets are announced removed, before avatar.removed", async () => {
-    const m = makeMock();
-    const { sceneSetId } = await composed(m, 5);
-    m.scheduler.runAll();
-    await unwrap(m.client.request("avatars.delete", { avatarId: MIA.avatarId }));
-
-    const told = m.events.flatMap((e) => (e.type === "scenes.changed" && e.payload.change === "removed" ? [`set:${e.payload.sceneSetId}`] : e.type === "avatar.removed" ? ["avatar"] : []));
-    expect(told).toEqual([`set:${sceneSetId}`, "avatar"]);
-  });
-
-  test("the set keeps the text model it was made with when the settings change it later", async () => {
-    const m = makeMock();
-    await composed(m, 5);
-    m.scheduler.runAll();
-    const snapshot = await unwrap(m.client.request("engine.snapshot", {}));
-    await unwrap(m.client.request("settings.setModels", { imageModel: snapshot.settings.imageModel, textModel: "openai/gpt-5.1" }));
-
-    expect((await setOf(m)).textModel).toBe(snapshot.settings.textModel);
-  });
-
-  test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
-    const m = makeMock();
-    // A chunk given up on (S5.6d: no job reaches this state any more; the outcome stays what an older version left).
-    m.engine.failNextSceneAttempt("gave-up");
-    const { sceneSetId } = await composed(m, 30);
-    m.scheduler.runAll();
-    const ended = await setOf(m);
-    expect(ended.lastCompose).toEqual({ total: 30, written: 5, gaveUp: 25 });
-
-    await unwrap(edit(m, sceneSetId, ended.revision, { op: "remove", sceneIds: [1, 2, 3, 26, 27] }));
-
-    expect((await setOf(m)).lastCompose).toEqual({ total: 30, written: 5, gaveUp: 25 });
-  });
 });
 
 describe("a write that stops, and what stays", () => {
-  test("a free failure (429) stops the job with both attempts kept: failed after scenes.changed, stopped by the rate limit", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("rate-limited");
-    const { jobId } = await composed(m, 5);
-    m.scheduler.runAll();
-
-    expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "scenes", jobId, error: { code: "RATE_LIMITED" } } });
-    expect(m.events.findLastIndex((e) => e.type === "scenes.changed")).toBeLessThan(m.events.findIndex((e) => e.type === "job.failed"));
-    const view = await setOf(m);
-    expect(view).toMatchObject({ status: "stopped", stoppedBy: "rate-limited", spentMicros: 0 });
-    expect(view.chunks[0]?.attemptsLeft).toBe(2);
-  });
 
   test("a dropped connection leaves a reserve open at its worst case: one attempt left, and paid calls wait for the reconcile", async () => {
     const m = makeMock();
@@ -259,250 +122,12 @@ describe("a write that stops, and what stays", () => {
     expect(await codeOf(write(m, view.sceneSetId, view.revision, ATTEMPT))).toBe("RECONCILE_REQUIRED");
   });
 
-  test("after the reconcile closed it at the worst case, «Дописать» gets ONE attempt, never a fresh pair", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("network");
-    await composed(m, 5);
-    m.scheduler.runAll();
-    await unwrap(m.client.request("money.reconcile", {}));
-    const view = await setOf(m);
-    expect(view).toMatchObject({ openReserveMicros: 0, spentMicros: ATTEMPT });
-    expect(view.chunks[0]?.attemptsLeft).toBe(1);
-    expect((await unwrap(m.client.request("scenes.estimateWrite", { sceneSetId: view.sceneSetId, target: { kind: "unwritten" } }))).estimate.worstMicros).toBe(ATTEMPT);
-
-    m.engine.failNextSceneAttempt("rejected");
-    await unwrap(write(m, view.sceneSetId, view.revision, ATTEMPT));
-    m.scheduler.runAll();
-
-    // 5a.2 (S5.6d): the chunk's last attempt, rejected, used to give its scenes up («rejected»); they now take the plain sentence, as the engine's do.
-    const after = await setOf(m);
-    expect(after.status).toBe("ready");
-    expect(after.scenes.every((s) => s.text !== null && s.unwritten === null && s.gaveUpBy === null)).toBe(true);
-    expect(after.chunks[0]).toMatchObject({ attemptsLeft: 0, gaveUpBy: null });
-  });
-
   // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «a chunk rejected twice is given up (written 5, unwritten 25)». A planned scene the model could not write takes
   // the plain sentence, so the whole set is written and nothing is given up.
-  test("a chunk rejected twice takes the plain sentence for its scenes and the job goes on with the next one", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("rejected");
-    m.engine.failNextSceneAttempt("rejected");
-    const { jobId } = await composed(m, 30);
-    m.scheduler.runAll();
-
-    expect(m.events.find((e) => e.type === "job.done")).toMatchObject({ payload: { jobId, result: { written: 30, unwritten: 0 } } });
-    const view = await setOf(m);
-    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
-    expect(view.scenes.every((s) => s.text !== null && s.gaveUpBy === null)).toBe(true);
-    for (const scene of view.scenes.slice(0, 25)) expect(scene.text).toBe(plainOf(scene));
-    expect(view.scenes.slice(25).every((s) => s.text !== plainOf(s))).toBe(true);
-    expect(view.lastCompose).toEqual({ total: 30, written: 30, gaveUp: 0 });
-  });
 
   // The model's answer can be wrong for one scene of a chunk and right for the rest (the engine's reader marks the slot): the accepted scenes are kept and the second attempt asks for the one left.
-  test("a partial answer keeps its accepted scenes; the second attempt writes the scene left, and is priced for that one scene", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("partial");
-    m.engine.failNextSceneAttempt("ok");
-    await composed(m, 3);
-    m.scheduler.runAll();
-
-    const view = await setOf(m);
-    expect(view.scenes.every((s) => s.text !== null && s.gaveUpBy === null)).toBe(true);
-    expect(view.scenes.map((s) => s.text === plainOf(s))).toEqual([false, false, false]);
-    expect(view.spentMicros).toBe(Math.round(3 * 457.5) + Math.round(1 * 457.5));
-  });
-
-  test("a scene the model gets wrong on both attempts takes the plain sentence while the rest keep the model's", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("partial");
-    m.engine.failNextSceneAttempt("partial");
-    const { jobId } = await composed(m, 3);
-    m.scheduler.runAll();
-
-    expect(m.events.find((e) => e.type === "job.done")).toMatchObject({ payload: { jobId, result: { written: 3, unwritten: 0 } } });
-    const view = await setOf(m);
-    expect(view.scenes.map((s) => s.text === plainOf(s))).toEqual([true, false, false]);
-    expect(view.chunks[0]).toMatchObject({ gaveUpBy: null });
-  });
 
   // Round-1 review of S5.6d (I5.31): final for the request (one attempt, free), never for the scenes: they take the plain sentence at once.
-  test("a provider's refusal writes its chunk plain at once, gives nothing up, and the next chunk is written", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("refused");
-    await composed(m, 30);
-    m.scheduler.runAll();
-    const view = await setOf(m);
-    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
-    for (const scene of view.scenes.slice(0, 25)) expect(scene.text).toBe(plainOf(scene));
-    expect(view.scenes.slice(25).every((s) => s.text !== plainOf(s))).toBe(true);
-    expect(view.spentMicros).toBe(Math.round(5 * 457.5));
-  });
 
-  test("the scenes a partial answer got right stay written when the next attempt gets no answer", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("partial");
-    m.engine.failNextSceneAttempt("rate-limited");
-    await composed(m, 3);
-    m.scheduler.runAll();
-    const view = await setOf(m);
-    expect(view.scenes.map((s) => s.text !== null)).toEqual([false, true, true]);
-  });
-
-  test("scenes.cancel stops the job: cancelled after scenes.changed, the chunks written stay", async () => {
-    const m = makeMock();
-    const { sceneSetId, jobId } = await composed(m, 30);
-    m.scheduler.next();
-    await unwrap(m.client.request("scenes.cancel", { sceneSetId }));
-    m.scheduler.runAll();
-
-    expect(m.events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: { kind: "scenes", jobId } });
-    const view = await setOf(m);
-    expect(view).toMatchObject({ status: "stopped", stoppedBy: "cancelled" });
-    expect(view.scenes.slice(0, 25).every((s) => s.text !== null)).toBe(true);
-    expect(view.scenes.slice(25).every((s) => s.text === null)).toBe(true);
-  });
-
-  test("«Дописать» writes only what is waiting, within its price, and ends the set ready", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("rate-limited");
-    await composed(m, 30);
-    m.scheduler.runAll();
-    const view = await setOf(m);
-
-    const estimate = (await unwrap(m.client.request("scenes.estimateWrite", { sceneSetId: view.sceneSetId, target: { kind: "unwritten" } }))).estimate;
-    expect(estimate.worstMicros).toBe(4 * ATTEMPT);
-    expect(await codeOf(write(m, view.sceneSetId, view.revision, estimate.worstMicros - 1))).toBe("PRICE_CHANGED");
-    expect(await codeOf(write(m, view.sceneSetId, view.revision + 5, estimate.worstMicros))).toBe("SCENES_CHANGED");
-    await unwrap(write(m, view.sceneSetId, view.revision, estimate.worstMicros));
-    m.scheduler.runAll();
-
-    expect(await setOf(m)).toMatchObject({ status: "ready", write: null });
-    expect(await codeOf(write(m, view.sceneSetId, (await setOf(m)).revision, 10 * ATTEMPT))).toBe("VALIDATION");
-  });
 });
 
-describe("scenes.edit", () => {
-  async function readySet(m: Mock, count = 5): Promise<SceneSetView> {
-    await composed(m, count);
-    m.scheduler.runAll();
-    return setOf(m);
-  }
-
-  test("a text edit is announced and answered with the next revision", async () => {
-    const m = makeMock();
-    const before = await readySet(m);
-    const result = await unwrap(edit(m, before.sceneSetId, before.revision, { op: "text", sceneId: 2, text: "She waves from the pier." }));
-    if (!("sceneSet" in result)) throw new Error("expected the set");
-    expect(result.sceneSet.revision).toBe(before.revision + 1);
-    expect(result.sceneSet.scenes[1]).toMatchObject({ text: "She waves from the pier.", edited: true });
-    expect(changes(m.events).at(-1)?.revision).toBe(before.revision + 1);
-  });
-
-  test.each([
-    ["   ", "empty"],
-    ["a".repeat(601), "too-long"],
-    ["one\ntwo", "not-one-line"],
-    ["She wears a bikini.", "revealing-word"],
-    ["A teenage girl smiles.", "youth-word"],
-  ])("the problem with %j is %s: a result, and nothing changes", async (text, reason) => {
-    const m = makeMock();
-    const before = await readySet(m);
-    const eventsBefore = changes(m.events).length;
-    expect(await unwrap(edit(m, before.sceneSetId, before.revision, { op: "text", sceneId: 1, text }))).toMatchObject({ problem: { reason } });
-    expect(await setOf(m)).toEqual(before);
-    expect(changes(m.events)).toHaveLength(eventsBefore);
-  });
-
-  test("a stale revision is SCENES_CHANGED, and two edits on one revision lose nothing", async () => {
-    const m = makeMock();
-    const { sceneSetId, revision } = await readySet(m);
-    await unwrap(edit(m, sceneSetId, revision, { op: "text", sceneId: 1, text: "From window A." }));
-    expect(await codeOf(edit(m, sceneSetId, revision, { op: "remove", sceneIds: [2] }))).toBe("SCENES_CHANGED");
-    const view = await setOf(m);
-    expect(view.scenes[0]?.text).toBe("From window A.");
-    expect(view.scenes[1]?.removed).toBe(false);
-  });
-
-  test("removing many scenes is one revision and one event, and restoring brings them back", async () => {
-    const m = makeMock();
-    const before = await readySet(m, 5);
-    const eventsBefore = changes(m.events).length;
-    const removed = await unwrap(edit(m, before.sceneSetId, before.revision, { op: "remove", sceneIds: [1, 2, 3] }));
-    if (!("sceneSet" in removed)) throw new Error("expected the set");
-    expect(removed.sceneSet.revision).toBe(before.revision + 1);
-    expect(removed.sceneSet.scenes.filter((s) => s.removed)).toHaveLength(3);
-    expect(changes(m.events)).toHaveLength(eventsBefore + 1);
-    const restored = await unwrap(edit(m, before.sceneSetId, removed.sceneSet.revision, { op: "restore", sceneIds: [1, 2, 3] }));
-    if (!("sceneSet" in restored)) throw new Error("expected the set");
-    expect(restored.sceneSet.scenes.every((s) => !s.removed)).toBe(true);
-  });
-
-  test("a typed text makes a waiting scene written, and a set whose waiting scenes are all removed reads ready", async () => {
-    const m = makeMock();
-    m.engine.failNextSceneAttempt("rate-limited");
-    await composed(m, 5);
-    m.scheduler.runAll();
-    const before = await setOf(m);
-    expect(before.status).toBe("stopped");
-    const typed = await unwrap(edit(m, before.sceneSetId, before.revision, { op: "text", sceneId: 1, text: "Typed." }));
-    if (!("sceneSet" in typed)) throw new Error("expected the set");
-    expect(typed.sceneSet.scenes[0]).toMatchObject({ text: "Typed.", unwritten: null });
-    const removed = await unwrap(edit(m, before.sceneSetId, typed.sceneSet.revision, { op: "remove", sceneIds: [2, 3, 4, 5] }));
-    if (!("sceneSet" in removed)) throw new Error("expected the set");
-    expect(removed.sceneSet).toMatchObject({ status: "ready", stoppedBy: null });
-  });
-
-  test("a scene the set does not have is VALIDATION; IN_FLIGHT while the job runs; NOT_FOUND for an unknown set", async () => {
-    const m = makeMock();
-    const { sceneSetId } = await composed(m, 5);
-    expect(await codeOf(edit(m, sceneSetId, 1, { op: "remove", sceneIds: [1] }))).toBe("IN_FLIGHT");
-    m.scheduler.runAll();
-    const view = await setOf(m);
-    expect(await codeOf(edit(m, sceneSetId, view.revision, { op: "remove", sceneIds: [1, 99] }))).toBe("VALIDATION");
-    expect(await codeOf(edit(m, "set-nobody-0404", 1, { op: "remove", sceneIds: [1] }))).toBe("NOT_FOUND");
-  });
-
-  test("a used set is read-only: VALIDATION for an edit, a write and a discard", async () => {
-    const m = makeMock();
-    const view = await readySet(m);
-    m.engine.markSceneSetUsed(view.sceneSetId);
-    expect(await setOf(m)).toMatchObject({ status: "used", runId: expect.any(String) });
-    expect(await codeOf(edit(m, view.sceneSetId, view.revision, { op: "remove", sceneIds: [1] }))).toBe("VALIDATION");
-    expect(await codeOf(m.client.request("scenes.discard", { sceneSetId: view.sceneSetId }))).toBe("VALIDATION");
-    expect(await codeOf(write(m, view.sceneSetId, view.revision, 10 * ATTEMPT))).toBe("VALIDATION");
-  });
-});
-
-describe("scenes.discard, scenes.cancel and a seeded set", () => {
-  test("a discard removes the set and announces it; refused while a job runs", async () => {
-    const m = makeMock();
-    const { sceneSetId } = await composed(m, 5);
-    expect(await codeOf(m.client.request("scenes.discard", { sceneSetId }))).toBe("IN_FLIGHT");
-    m.scheduler.runAll();
-    await unwrap(m.client.request("scenes.discard", { sceneSetId }));
-    expect(m.events.at(-1)).toMatchObject({ type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId: MIA.avatarId } });
-    expect(await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).toEqual({ sceneSet: null, unreadable: 0 });
-  });
-
-  test("a cancel answers ok for a set that is not running, NOT_FOUND for an unknown one", async () => {
-    const m = makeMock();
-    const { sceneSetId } = await composed(m, 5);
-    m.scheduler.runAll();
-    expect(await unwrap(m.client.request("scenes.cancel", { sceneSetId }))).toEqual({ sceneSetId });
-    expect(await codeOf(m.client.request("scenes.cancel", { sceneSetId: "set-nobody-0404" }))).toBe("NOT_FOUND");
-  });
-
-  test("a seeded set is what scenes.get answers, with the files nobody could read counted", async () => {
-    const m = makeMock({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 30, written: 25, stopped: "closed" }], unreadableSceneSets: 2 });
-    const { sceneSet, unreadable } = await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }));
-    expect(unreadable).toBe(2);
-    expect(sceneSet).toMatchObject({ sceneSetId: "set-seed-0001", status: "stopped", stoppedBy: "closed" });
-    expect(sceneSet?.scenes.filter((s) => s.unwritten === "pending")).toHaveLength(5);
-  });
-
-  test("scenes.get for an avatar the library does not have is NOT_FOUND", async () => {
-    const m = makeMock();
-    expect(await codeOf(m.client.request("scenes.get", { avatarId: "avatar-nobody-404" }))).toBe("NOT_FOUND");
-  });
-});

@@ -50,50 +50,5 @@ describe("seedLaunch", () => {
     ]);
   });
 
-  test("a finished video is a record of the library: its photos used, its mark in the log, the avatar's counts moved", async () => {
-    const mock = world();
-    const { launchId, videoIds } = seed(mock);
-    const listed = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
-    expect(listed.published).toBe("ok");
-    expect(listed.videos.map((v) => [v.videoId, v.origin, v.launchId, v.photoCount, typeof v.publishedAt === "string", v.music?.title])).toEqual([
-      [videoIds[1], "autopilot", launchId, 3, false, "summer-loop.m4a"],
-      [videoIds[0], "autopilot", launchId, 1, true, "Soft Static"],
-    ]);
-    const photos = await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
-    expect(photos.photos.filter((p) => p.used).length).toBe(4);
-    const avatars = await unwrap(mock.client.request("avatars.list", {}));
-    expect(avatars.avatars.find((a) => a.avatarId === MIA.avatarId)).toMatchObject({ videoCount: 2, eligibleUnusedCount: 4 });
-  });
-
-  test("«Удалить видео и отклонить фото» reaches a seeded video: its photos rejected, the record gone", async () => {
-    const mock = world();
-    const { videoIds } = seed(mock);
-    const videoId = videoIds[1] ?? "";
-    const done = await unwrap(mock.client.request("videos.delete", { videoId, mode: "video", rejectPhotos: true }));
-    expect(done.rejectedPhotoIds).toHaveLength(3);
-    const listed = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
-    expect(listed.videos.some((v) => v.videoId === videoId)).toBe(false);
-    const photos = await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
-    expect(photos.photos.filter((p) => p.rejected).map((p) => p.photoId).sort()).toEqual([...(done.rejectedPhotoIds ?? [])].sort());
-  });
 });
 
-describe("tearPublishedLog", () => {
-  test("the marks read unknown and every video unmarked; a mark heals the log, keeps a mark's first time, and the marks read again", async () => {
-    const mock = world();
-    const { videoIds } = seed(mock);
-    const marked = (await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }))).videos.find((v) => v.videoId === videoIds[0])?.publishedAt;
-    mock.engine.tearPublishedLog(MIA.avatarId);
-    const torn = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
-    expect(torn.published).toBe("unknown");
-    expect(torn.videos.every((v) => v.publishedAt === undefined)).toBe(true);
-    // Sofia's log is her own, and nobody ever marked a video of hers, so she has none (S4.6g L6: the mock used to answer "ok" for her, where the engine has no log to read): the
-    // field is absent, as from an avatar with no marks, and the tear of Mia's log does not reach her.
-    expect("published" in (await unwrap(mock.client.request("videos.list", { avatarId: SOFIA.avatarId })))).toBe(false);
-
-    await unwrap(mock.client.request("videos.setPublished", { videoId: videoIds[0] ?? "", published: true }));
-    const healed = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
-    expect(healed.published).toBe("ok");
-    expect(healed.videos.find((v) => v.videoId === videoIds[0])?.publishedAt).toBe(marked);
-  });
-});

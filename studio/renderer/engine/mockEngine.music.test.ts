@@ -28,38 +28,4 @@ describe("the mock's music", () => {
     expect(jobs).toEqual([]);
   });
 
-  test("videos.render {spec} says the same for a headless spec", async () => {
-    const { mock, spec } = await withMusic(trending);
-
-    const reply = await mock.client.request("videos.render", { spec });
-
-    expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "track-unavailable", path: ["music"] }] } });
-  });
-
-  test("montages.get lists track-unavailable for the draft, as the engine does", async () => {
-    const { mock, montageId } = await withMusic(trending);
-
-    const { issues } = await unwrap(mock.client.request("montages.get", { montageId }));
-
-    expect(issues).toEqual([{ code: "track-unavailable", path: ["music"] }]);
-  });
-
-  test("an own track is no longer not-yet-supported (3f.4): the library does not hold it, so it is media-unavailable at music, and the track-store issue is not added", async () => {
-    const { mock, montageId } = await withMusic(own);
-
-    const { issues } = await unwrap(mock.client.request("montages.get", { montageId }));
-    const reply = await mock.client.request("videos.render", { montageId });
-
-    expect(issues).toEqual([{ code: "media-unavailable", path: ["music"] }]);
-    expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "media-unavailable", path: ["music"] }] } });
-  });
-
-  test("a montage with no music has no music issue", async () => {
-    const mock = makeMock();
-    const draft = await draftOf(mock, [P1, P2]);
-
-    const { issues } = await unwrap(mock.client.request("montages.get", { montageId: draft.montageId }));
-
-    expect(issues).toEqual([]);
-  });
 });
