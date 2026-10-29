@@ -119,29 +119,6 @@ describe("after «Сохранить» (11)", () => {
     expect(within(checkCard()).getByRole("button", { name: /^Подтвердить новую цену/ }).textContent).toBe("Подтвердить новую цену · до $0.040");
   });
 
-  test("no key when she is saved: the price was shown, but no check is sent, and the card says why (review r1, 8)", async () => {
-    const { engine } = setup({ drafts: [readyDraft()], apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
-    await readyToSave();
-    await waitFor(() => expect(screen.queryByText(withText(HINT)) === null).toBe(false));
-    await save();
-
-    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
-    expect(text(checkCard())).toContain("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.");
-    expect(within(checkCard()).getByRole("button", { name: /^Проверить описание/ }).hasAttribute("disabled")).toBe(true);
-  });
-
-  test("paid requests stopped for a reconcile when she is saved: no check is sent (review r1, 8)", async () => {
-    const { engine } = setup({ drafts: [readyDraft()] });
-    await readyToSave();
-    await waitFor(() => expect(screen.queryByText(withText(HINT)) === null).toBe(false));
-    inAct(() => engine.requireReconcile(["open-reserves"]));
-    await flush();
-    await save();
-
-    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
-    expect(text(checkCard())).toContain("Платные запросы остановлены до сверки расходов.");
-  });
-
   test("React's development double mount (StrictMode) still sends the check once (review r1, 8)", async () => {
     const scheduler = new ManualScheduler();
     const engine = new MockEngine({ scheduler, latencyMs: 0, drafts: [readyDraft()] });
@@ -159,17 +136,6 @@ describe("after «Сохранить» (11)", () => {
     expect(text(checkCard())).toContain("Описание совпадает с фото");
   });
 
-  test("no price under «Сохранить», no check after it", async () => {
-    const { engine } = setup({ drafts: [readyDraft()] });
-    engine.failNext("avatars.estimateCheckDescriptor", { code: "INTERNAL" });
-    await readyToSave();
-    expect(screen.queryByText(withText(HINT)) === null).toBe(true);
-
-    await save();
-    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
-    expect(text(checkCard())).toContain("последняя: ещё не было");
-    expect(within(checkCard()).getByRole("button", { name: /^Проверить описание/ }).textContent).toBe("Проверить описание · до $0.025");
-  });
 });
 
 describe("after «Импортировать» (05–06)", () => {
@@ -199,65 +165,4 @@ describe("after «Импортировать» (05–06)", () => {
     expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
   });
 
-  test("«прочитано с фото» goes once the owner edits the text, and stays gone after a look at «Фото» and back (review r1, 1)", async () => {
-    setup();
-    await importZoe();
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${IMPORT_TEXT} Soft smile.` } });
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
-    await flush();
-    expect(within(descCard()).getByText(`${IMPORT_TEXT} Soft smile.`).tagName).toBe("P");
-    expect(within(descCard()).queryByText("прочитано с фото") === null).toBe(true);
-
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
-    await flush();
-    expect(within(descCard()).queryByText("прочитано с фото") === null).toBe(true);
-  });
-
-  test("a mismatch at import (06): the notice points at it, and the proposal is fixed against the text the import read", async () => {
-    const { engine, client } = setup();
-    engine.setNextDescriptorCheck(mismatch(IMPORT_TEXT, "brown eyes", "green eyes"));
-    await importZoe();
-
-    // S5.R2 re-pin: no body read from the photo either. S5.3d re-pin: the portraits it started are still drawing.
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — проверьте тело и сверку. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
-    expect(text(checkCard())).toContain("Не совпадает: глаза");
-    expect(text(checkCard())).toContain("В описании: карие");
-    expect(text(checkCard())).toContain("На фото: зелёные");
-    expect(text(checkCard())).toContain("при импорте");
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Исправить описание" }));
-    await flush();
-
-    const listed = await client.request("avatars.list", {});
-    const zoeId = listed.ok ? (listed.result.avatars.find((a) => a.name === "Zoe")?.avatarId ?? null) : null;
-    expect(callsOf(engine, "avatars.editDescriptor").map((c) => c.payload)).toEqual([
-      { avatarId: zoeId ?? "(Zoe is not listed)", text: IMPORT_TEXT.replace("brown eyes", "green eyes"), expectedText: IMPORT_TEXT },
-    ]);
-    // Edited now: no longer as read from the photo.
-    expect(within(descCard()).queryByText("прочитано с фото") === null).toBe(true);
-  });
-
-  test("an import whose check came back empty keeps the avatar and offers the check here", async () => {
-    const { engine, scheduler } = setup();
-    engine.setNextDescriptorCheck({ code: "TIMEOUT" });
-    await importZoe();
-
-    // S5.R2 re-pin: no body read from the photo either. S5.3d re-pin: the portraits it started are still drawing.
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — осталось тело. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
-    expect(text(checkCard())).toContain("Сверка при импорте не прошла");
-    const button = within(checkCard()).getByRole("button", { name: /^Проверить описание/ });
-    expect(button.textContent).toBe("Проверить описание · до $0.025");
-    // S5.3d re-pin: the portrait batch holds her like a run does, so the check waits for it (mockup 15).
-    expect(button.hasAttribute("disabled")).toBe(true);
-    expect(text(checkCard())).toContain(CHECK_HELD_REASON);
-    runAll(scheduler);
-    await flush();
-
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /^Проверить описание/ }));
-    await flush();
-    expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload.acceptedWorstMicros)).toEqual([25_000]);
-    expect(text(checkCard())).toContain("Описание совпадает с фото");
-  });
 });

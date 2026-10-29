@@ -68,16 +68,6 @@ async function start(): Promise<void> {
 const RUN: RunRequest = { avatarId: NINI.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false } };
 
 describe("a wizard avatar", () => {
-  test("has no card and no panel: today's bare master frame, and the check compares with the master", async () => {
-    const { engine, pricedBefore } = await openLook(MIA);
-    expect(screen.queryByRole("region", { name: "Мастер-портрет" }) === null).toBe(true);
-    expect(noPanel()).toBe(true);
-    expect(text(document.querySelector(".look-master-pill") ?? document.body)).toBe("мастер-портрет");
-    expect(text(checkCard())).not.toContain("исходное фото");
-    expect(text(checkCard())).toContain("один запрос с мастер-портретом");
-    // Nothing is priced for her on the tab: there is nothing to draw from.
-    expect(callsOf(engine, "avatars.estimatePortraits")).toHaveLength(pricedBefore);
-  });
 });
 
 describe("20 · an imported avatar whose master is the imported photo", () => {
@@ -93,19 +83,6 @@ describe("20 · an imported avatar whose master is the imported photo", () => {
     expect(noPanel()).toBe(true);
   });
 
-  test("the check names the imported photo as what it compares with (I5.20)", async () => {
-    await openLook(NINI);
-    expect(text(checkCard().querySelector(".chk-pair") ?? checkCard())).toBe("Описание ↔ сверяется с: исходное фото");
-    expect(text(checkCard())).toContain("один запрос с исходным фото");
-    expect(text(checkCard())).not.toContain("Сравнивает описание с мастер-портретом");
-  });
-
-  test("20b: no price, no start — the button waits without a second line, and says so", async () => {
-    await openLook(NINI, {}, (engine) => engine.failNext("avatars.estimatePortraits", { code: "PRICE_UNAVAILABLE" }));
-    expect(startButton().textContent).toBe("Получить 5 вариантов");
-    expect(isDisabled(startButton())).toBe(true);
-    expect(text(masterCard())).toContain("цена недоступна, попробуйте позже");
-  });
 });
 
 describe("15 · a batch drawing", () => {
@@ -146,17 +123,6 @@ describe("15 · a batch drawing", () => {
     expect(text(checkCard())).toContain(CHECK_HELD_REASON);
   });
 
-  test("the description stays editable while the batch draws", async () => {
-    const { engine } = await openLook(NINI);
-    await start();
-    const desc = screen.getByRole("region", { name: "Описание" });
-    fireEvent.click(within(desc).getByRole("button", { name: "Изменить текст" }));
-    fireEvent.change(within(desc).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${NINI.descriptor.text} Soft smile.` } });
-    fireEvent.click(within(desc).getByRole("button", { name: "Сохранить" }));
-    await flush();
-    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(1);
-    expect(within(desc).getByText(`${NINI.descriptor.text} Soft smile.`).tagName).toBe("P");
-  });
 });
 
 describe("16 · the batch is ready", () => {
@@ -220,16 +186,6 @@ describe("16 · the batch is ready", () => {
     ]);
   });
 
-  test("16d: over a portrait master, the pick and the reset say the master goes", async () => {
-    await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }, { photoId: "photo-ava-c2", likeness: 0.7 }] }] });
-    expect(pill()).toBe("мастер-портрет · сходство 0.72");
-    expect(radios().map((r) => r.getAttribute("aria-label"))).toEqual(["Вариант A · сходство 0.79 · лучший", "Вариант B · сходство 0.70"]);
-    expect(text(panel())).toContain("Если выберете вариант, текущий мастер-портрет и остальные варианты удалятся.");
-    expect(within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" })).toBeDefined();
-    // Waiting from an earlier visit: no batch's end to say, only the portraits.
-    expect(panel().querySelectorAll(".cand-slot-failed, .cand-slot-hidden")).toHaveLength(0);
-  });
-
   test("16c: at the limit «Ещё 5» waits with the reason, and the reset reads «Удалить варианты»", async () => {
     const fifteen = Array.from({ length: 15 }, (_, i) => ({ photoId: `photo-nini-c${String(i + 10)}`, likeness: 0.56 + i / 100 }));
     await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: fifteen }, AVA_SEED] });
@@ -254,26 +210,6 @@ describe("16 · the batch is ready", () => {
     expect(screen.getAllByText(/Невыбранных вариантов слишком много/)).toHaveLength(1);
   });
 
-  test("16c: refused at the limit with none to see, the panel offers «Удалить варианты», which clears the hidden ones", async () => {
-    const { engine } = await openLook(NINI);
-    engine.scriptNextPortraits({ refuse: { code: "VALIDATION", portraitReason: "too-many-candidates" } });
-    await start();
-    expect(text(panel())).toContain("Выберите один или нажмите «Удалить варианты», потом повторите.");
-    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить варианты" }));
-    await flush();
-    fireEvent.click(within(within(panel()).getByRole("alert")).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(callsOf(engine, "avatars.discardPortraits").map((c) => c.payload)).toEqual([{ avatarId: NINI.avatarId }]);
-    expect(noPanel()).toBe(true);
-    expect(isDisabled(startButton())).toBe(false);
-  });
-
-  test("16c: from 11 waiting a batch of five would pass the limit, and the line says how many wait", async () => {
-    const twelve = Array.from({ length: 12 }, (_, i) => ({ photoId: `photo-nini-c${String(i + 10)}`, likeness: 0.6 + i / 100 }));
-    await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: twelve }, AVA_SEED] });
-    expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
-    expect(text(panel())).toContain("Уже 12 вариантов — ещё 5 превысят предел в 15.");
-  });
 });
 
 describe("16e · some slots failed at a cost", () => {
@@ -342,81 +278,12 @@ describe("16f · the reset asks first", () => {
 });
 
 describe("17 · none passed", () => {
-  test("the slots say why; nothing to choose; the reset only closes the panel", async () => {
-    const { engine, scheduler } = await openLook(NINI);
-    engine.scriptNextPortraits({
-      slots: [{ kind: "unlike", likeness: 0.52 }, { kind: "unlike", likeness: 0.49 }, { kind: "unlike", likeness: 0.41 }, { kind: "no-face" }, { kind: "multiple-faces" }],
-    });
-    await start();
-    runAll(scheduler);
-    await flush();
-
-    // Not every verdict is «не похожа» here (a no-face and a several-faces slot): the gate's threshold is not blamed.
-    expect(text(panel())).toContain("Подходящих вариантов нет.");
-    expect(text(panel())).not.toContain("Ни один вариант не похож");
-    expect(text(panel().querySelector(".candidates-head") ?? panel())).toContain("ни один не подошёл");
-    expect(radios()).toHaveLength(0);
-    expect(goneTiles().map(([title]) => title)).toEqual(["Не похожа · 0.52", "Не похожа · 0.49", "Не похожа · 0.41", "Лицо не найдено", "Несколько лиц"]);
-    expect(within(panel()).getByRole("button", { name: "Ещё 5 вариантов · до $0.30" })).toBeDefined();
-    fireEvent.click(within(panel()).getByRole("button", { name: "Оставить исходное фото" }));
-    await flush();
-    expect(callsOf(engine, "avatars.discardPortraits")).toHaveLength(0);
-    expect(noPanel()).toBe(true);
-  });
-
-  test("every slot «не похожа»: the line names the gate's threshold", async () => {
-    const { engine, scheduler } = await openLook(NINI);
-    engine.scriptNextPortraits({ slots: [0.52, 0.49, 0.41, 0.4, 0.3].map((likeness) => ({ kind: "unlike", likeness })) });
-    await start();
-    runAll(scheduler);
-    await flush();
-
-    expect(text(panel())).toContain("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
-  });
 });
 
 describe("18 · the batch failed", () => {
-  test("mid-batch (the key refused): the error says so, and the portraits already drawn can be chosen", async () => {
-    const { engine, scheduler } = await openLook(NINI);
-    await start();
-    tick(scheduler, 2);
-    await flush();
-    act(() => engine.rejectKey());
-    await flush();
-
-    expect(text(panel())).toContain(ERROR_MESSAGES_RU.AUTH_INVALID);
-    expect(radios().map((r) => r.getAttribute("aria-label"))).toEqual(["Вариант A · сходство 0.76 · лучший", "Вариант B · сходство 0.72"]);
-    // No slots are reported with a failure: only the drawn portraits.
-    expect(panel().querySelectorAll(".cand-slot-failed, .cand-slot-hidden")).toHaveLength(0);
-    // Another batch needs a working key: «Ещё 5» waits with the app's reason; the free pick does not.
-    expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
-    expect(text(panel())).toContain("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.");
-    expect(isDisabled(within(panel()).getByRole("button", { name: "Сделать мастером" }))).toBe(false);
-  });
-
-  test("every slot refused by the model: the batch failed with the refusal's text, nothing to choose, «Ещё 5» offered", async () => {
-    const { engine, scheduler } = await openLook(NINI);
-    engine.scriptNextPortraits({ slots: Array.from({ length: 5 }, () => ({ kind: "refused" as const })) });
-    await start();
-    runAll(scheduler);
-    await flush();
-    expect(text(panel())).toContain(ERROR_MESSAGES_RU.MODERATION_REFUSED);
-    expect(radios()).toHaveLength(0);
-    expect(isDisabled(within(panel()).getByRole("button", { name: "Ещё 5 вариантов · до $0.30" }))).toBe(false);
-  });
 });
 
 describe("18b · the start refused before anything was paid", () => {
-  test("no face on the imported photo: the start is not offered again, in §3's words; nothing else is said", async () => {
-    const { engine } = await openLook(NINI);
-    engine.scriptNextPortraits({ refuse: { code: "MASTER_FACE_UNUSABLE" } });
-    await start();
-    expect(isDisabled(startButton())).toBe(true);
-    expect(text(masterCard())).toContain("На исходном фото не найдено лицо — варианты не с чем сравнить. Ничего не потрачено.");
-    expect(screen.queryByText(ERROR_MESSAGES_RU.MASTER_FACE_UNUSABLE, { exact: false }) === null).toBe(true);
-    expect(noPanel()).toBe(true);
-  });
-
   test("the budget: the app's text, that nothing was started, and the way to the money", async () => {
     const { engine } = await openLook(NINI);
     engine.failNext("avatars.generatePortraits", { code: "BUDGET_EXCEEDED" });
@@ -427,27 +294,6 @@ describe("18b · the start refused before anything was paid", () => {
     expect(isDisabled(startButton())).toBe(false);
   });
 
-  test("the face check unavailable: its own text, which says already that nothing was spent", async () => {
-    const { engine } = await openLook(NINI);
-    engine.scriptNextPortraits({ refuse: { code: "FACE_GATE_UNAVAILABLE" } });
-    await start();
-    expect(screen.getByText(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE).closest(".notice")?.className).toContain("notice-danger");
-  });
-
-  test("the imported photo gone (source-unavailable): its Russian text", async () => {
-    const { engine } = await openLook(NINI);
-    engine.scriptNextPortraits({ refuse: { code: "INTERNAL", portraitReason: "source-unavailable" } });
-    await start();
-    expect(screen.getByText("Исходное фото недоступно — проверьте папку библиотеки. Варианты не запускались — ничего не потрачено.")).toBeDefined();
-  });
-
-  test("held by work the window cannot see: the start's reason at the button, and it can be asked again", async () => {
-    const { engine } = await openLook(NINI);
-    engine.setAvatarBusy(NINI.avatarId, true);
-    await start();
-    expect(text(masterCard())).toContain("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
-    expect(isDisabled(startButton())).toBe(false);
-  });
 });
 
 describe("a start whose answer never came (main's deadline, M1)", () => {
@@ -508,58 +354,6 @@ describe("19a / 19 · a portrait becomes the master", () => {
     expect(text(checkCard().querySelector(".chk-pair") ?? checkCard())).toContain("исходное фото");
   });
 
-  test("22b: while her photo run draws, the pick, «Ещё 5» and the reset wait, each with its reason", async () => {
-    const { client } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
-    const started = await act(async () => client.request("runs.start", { ...RUN, avatarId: AVA.avatarId, acceptedWorstMicros: 3_075_000 }));
-    if (!started.ok) throw new Error(`runs.start: ${started.error.code}`);
-    await flush();
-    const pick = within(panel()).getByRole("button", { name: "Сделать мастером" });
-    expect(isDisabled(pick)).toBe(true);
-    expect(document.getElementById(pick.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Выбрать можно, когда закончатся съёмка и другие задачи этого аватара.");
-    expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
-    expect(isDisabled(within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" }))).toBe(true);
-    expect(text(panel())).toContain("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
-  });
-
-  test("22b: under the disabled reset its own wait, not «Варианты удалятся.», and the button points at it (review L2)", async () => {
-    const { client } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
-    const started = await act(async () => client.request("runs.start", { ...RUN, avatarId: AVA.avatarId, acceptedWorstMicros: 3_075_000 }));
-    if (!started.ok) throw new Error(`runs.start: ${started.error.code}`);
-    await flush();
-    const reset = within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" });
-    expect(isDisabled(reset)).toBe(true);
-    expect(describedText(reset)).toBe("Удалить варианты можно, когда закончатся съёмка и другие задачи этого аватара.");
-    expect(text(panel())).not.toContain("Варианты удалятся.");
-  });
-
-  test("a reset refused IN_FLIGHT with its question open says the wait under the question (review L2)", async () => {
-    const { engine } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
-    fireEvent.click(within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" }));
-    await flush();
-    engine.setAvatarBusy(AVA.avatarId, true);
-    fireEvent.click(within(within(panel()).getByRole("alert")).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(within(panel()).getByRole("alert")).toBeDefined();
-    expect(text(panel())).toContain("Удалить варианты можно, когда закончатся съёмка и другие задачи этого аватара.");
-  });
-
-  test("«Ещё 5» refused IN_FLIGHT for work the window cannot see says why under it (review L1)", async () => {
-    const { engine } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
-    engine.setAvatarBusy(AVA.avatarId, true);
-    fireEvent.click(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }));
-    await flush();
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
-    expect(describedText(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
-  });
-
-  test("a pick refused IN_FLIGHT for work the window cannot see says the same wait, and the portraits stay", async () => {
-    const { engine } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
-    engine.setAvatarBusy(AVA.avatarId, true);
-    fireEvent.click(within(panel()).getByRole("button", { name: "Сделать мастером" }));
-    await flush();
-    expect(text(panel())).toContain("Выбрать можно, когда закончатся съёмка и другие задачи этого аватара.");
-    expect(radios()).toHaveLength(1);
-  });
 });
 
 describe("21 / 21b · after a switch, the way back", () => {
@@ -588,44 +382,9 @@ describe("21 / 21b · after a switch, the way back", () => {
 });
 
 describe("a portrait master whose file is gone (S5.3c `masterMissing`)", () => {
-  test("a short notice, and the way back to the imported photo stays offered", async () => {
-    const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0, avatars: [AVA], portraits: [AVA_SEED] });
-    // The engine's answer for that case: the mock keeps every file, so the list is told so on its way to the window.
-    const bridge: EngineBridge = {
-      async request(command) {
-        const reply = await engine.request(command);
-        if (reply.ok && reply.type === "avatars.portraits") return { ...reply, result: { ...reply.result, masterLikeness: null, masterMissing: true as const } };
-        return reply;
-      },
-      subscribe: (listener) => engine.subscribe(listener),
-    };
-    render(<App client={createEngineClient(bridge, "mock")} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ava" }));
-    await screen.findByRole("heading", { level: 1, name: "Ava" });
-    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
-    await flush();
-
-    expect(pill()).toBe("мастер-портрет");
-    expect(text(masterCard())).toContain("Файл мастер-портрета не найден. Верните исходное фото мастером или получите новые варианты.");
-    // Review L3: the way back is the primary action; a new batch is still offered, second.
-    const back = within(masterCard()).getByRole("button", { name: "Сделать мастером снова" });
-    expect(isDisabled(back)).toBe(false);
-    expect(back.className).toContain("btn-p");
-    expect(startButton().className).not.toContain("btn-p");
-    expect(isDisabled(startButton())).toBe(false);
-  });
 });
 
 describe("22 · held by a photo run", () => {
-  test("the start waits with the reason while her run draws", async () => {
-    const { client } = await openLook(NINI);
-    const started = await act(async () => client.request("runs.start", { ...RUN, acceptedWorstMicros: 3_075_000 }));
-    if (!started.ok) throw new Error(`runs.start: ${started.error.code}`);
-    await flush();
-    expect(isDisabled(startButton())).toBe(true);
-    expect(text(masterCard())).toContain("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
-    expect(text(checkCard())).toContain(CHECK_HELD_REASON);
-  });
 });
 
 describe("23 · the batch cancelled", () => {

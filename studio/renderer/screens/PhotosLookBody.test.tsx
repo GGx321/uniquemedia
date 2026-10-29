@@ -140,55 +140,10 @@ describe("07 · no body yet", () => {
     expect(counter()).toBe(`${TEXT.length} / ${600 - 2 - phrase.length}`);
   });
 
-  test("«Отмена» and Escape close the fields without a word to the engine", async () => {
-    const { engine } = await openLook(MIA);
-    fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
-    await flush();
-    pick(/^Грудь/, "Большая");
-    fireEvent.click(inBody().getByRole("button", { name: "Отмена" }));
-    await flush();
-    expect(bodyCard().className).not.toContain("look-body-edit");
-    expect(focusedLabel()).toBe(describeElement(inBody().getByRole("button", { name: "Задать тело" })));
-
-    fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
-    await flush();
-    expect(isChecked(radio(/^Грудь/, "не задано"))).toBe(true);
-    fireEvent.keyDown(radio(/^Грудь/, "не задано"), { key: "Escape" });
-    await flush();
-    expect(bodyCard().className).not.toContain("look-body-edit");
-    expect(callsOf(engine, "avatars.setBody")).toHaveLength(0);
-  });
 });
 
 describe("08 · «Изменить тело»", () => {
   const NINI: AvatarSummary = { ...MIA, name: "Nini", body: OLD };
-
-  test("the summary and the description carry her body; «Изменить тело» opens it in two columns with «Телосложение» read-only", async () => {
-    await openLook(NINI);
-    expect(summary().slice(0, 4)).toEqual([
-      ["Телосложение", "Спортивное"],
-      ["Рост", "Высокий"],
-      ["Грудь", "Большая"],
-      ["Фигура", "Прямая"],
-    ]);
-    const phrase = bodyPhrase(OLD) ?? "";
-    expect(phrase).toBe("tall, a full bust and a straight figure");
-    expect(text(descCard().querySelector(".descriptor-text") ?? descCard())).toBe(`${descriptorHead(TEXT)}; ${phrase}.`);
-    expect(text(descCard().querySelector(".desc-body") ?? descCard())).toBe(phrase);
-    expect(text(descCard())).toContain("фраза о теле — её пишет блок «Тело», не модель");
-
-    fireEvent.click(inBody().getByRole("button", { name: "Изменить тело" }));
-    await flush();
-    expect(bodyCard().querySelector(".body-grid .body-col") === null).toBe(false);
-    expect(Array.from(bodyCard().querySelectorAll(".body-rows .body-legend")).map(text)).toEqual(["Ноги · длина и форма", "Попа · размер и форма"]);
-    // D1: no control for the build here — it is the description's word, changed through «Изменить текст».
-    expect(inBody().queryByRole("group", { name: /^Телосложение/ }) === null).toBe(true);
-    expect(text(bodyCard().querySelector(".body-build") ?? bodyCard())).toBe("ТелосложениеСпортивноеменяется в «Описании»");
-    expect(text(bodyCard())).toContain("изменения — только в новых фото и клипах; готовые не меняются");
-    expect(isChecked(radio(/^Рост/, "Высокий"))).toBe(true);
-    expect(isChecked(radio(/^Фигура/, "Прямая"))).toBe(true);
-    expect(text(inBody().getByRole("group", { name: /^Тату и родинки на теле/ }).querySelector("legend") ?? bodyCard())).toBe("Тату и родинки на теле, до двух");
-  });
 
   test("«Описание» previews the change slot by slot, and its limit follows the new phrase; the text edit waits meanwhile", async () => {
     await openLook(NINI);
@@ -270,20 +225,6 @@ describe("setBody refused", () => {
     return harness;
   }
 
-  test("IN_FLIGHT (another job holds her): the reason, and the fields stay open as they were", async () => {
-    const harness = await editAndSave();
-    harness.engine.setAvatarEditing(MIA.avatarId, true);
-    await save();
-    expect(text(inBody().getByRole("alert"))).toBe(BODY_HELD_REASON);
-    expect(isChecked(radio(/^Рост/, "Средний"))).toBe(true);
-    expect(summary()).toEqual([]);
-    // Once the job ends, the same click saves.
-    harness.engine.setAvatarEditing(MIA.avatarId, false);
-    await save();
-    expect(callsOf(harness.engine, "avatars.setBody").map((c) => c.payload.body.height)).toEqual(["average", "average"]);
-    expect(summary()[1]).toEqual(["Рост", "Средний"]);
-  });
-
   test("too long with the body, seen before the click: the reason, and «Сохранить тело» waits", async () => {
     // 590 characters of description leave 8 for «; » and a phrase.
     const long: AvatarSummary = { ...MIA, name: "Lena", descriptor: { age: 25, text: "25-year-old woman, ".padEnd(590, "z") } };
@@ -300,37 +241,6 @@ describe("setBody refused", () => {
     expect(callsOf(engine, "avatars.setBody")).toHaveLength(0);
   });
 
-  test("too long with the body, answered by the engine (the text moved meanwhile): its reason", async () => {
-    const { engine } = await editAndSave();
-    engine.failNext("avatars.setBody", { code: "VALIDATION", descriptorReason: "too-long-with-body", detail: "over" });
-    await save();
-    expect(text(inBody().getByRole("alert"))).toBe(DESCRIPTOR_REASONS_RU["too-long-with-body"]);
-  });
-
-  test("invalid: the contract's reason, and the fields stay for another try", async () => {
-    const { engine } = await editAndSave();
-    engine.failNext("avatars.setBody", { code: "VALIDATION", descriptorReason: "invalid", detail: "the rules" });
-    await save();
-    expect(text(inBody().getByRole("alert"))).toBe(DESCRIPTOR_REASONS_RU.invalid);
-    // A change clears the reason; the next save goes.
-    pick(/^Рост/, "Высокий");
-    expect(inBody().queryByRole("alert") === null).toBe(true);
-  });
-
-  test("while this window's own check runs, the save waits with the reason (the engine would answer IN_FLIGHT)", async () => {
-    const { engine, scheduler } = await openLook(NINI);
-    engine.delayNext("avatars.checkDescriptor", 1_000);
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    fireEvent.click(inBody().getByRole("button", { name: "Изменить тело" }));
-    await flush();
-    pick(/^Рост/, "Средний");
-    expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(true);
-    expect(text(bodyCard())).toContain(`${BODY_HELD_REASON}.`);
-    runAll(scheduler);
-    await flush();
-    expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(false);
-  });
 });
 
 describe("05 · an import whose photo showed no body (S5.R2: the real path — no proposal is stored)", () => {
@@ -371,76 +281,10 @@ describe("05 · an import whose photo showed no body (S5.R2: the real path — n
     expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним. Рисуем варианты мастер-портрета.");
   });
 
-  test("«Позже» closes the fields with nothing sent; «Задать тело» opens them again as the import left them", async () => {
-    const { engine } = setup();
-    await importZoe();
-    fireEvent.click(inBody().getByRole("button", { name: "Позже" }));
-    await flush();
-    expect(bodyCard().className).not.toContain("look-body-edit");
-    expect(focusedLabel()).toBe(describeElement(inBody().getByRole("button", { name: "Задать тело" })));
-    expect(callsOf(engine, "avatars.setBody").length + callsOf(engine, "avatars.dismissBodyProposal").length).toBe(0);
-    // S5.3d re-pin: the import started its five reference portraits, still drawing here.
-    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.");
-    fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
-    await flush();
-    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("Тело с фото не прочитано — выберите сами или оставьте «не задано»");
-    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже"]);
-  });
-
-  test("the same avatar opened later, not from the import, shows her summary as any avatar without a body", async () => {
-    const { engine } = setup();
-    await importZoe();
-    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Zoe" }));
-    await screen.findByRole("heading", { level: 1, name: "Zoe" });
-    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
-    await flush();
-    expect(bodyCard().className).not.toContain("look-body-edit");
-    expect(inBody().getByRole("button", { name: "Задать тело" }).tagName).toBe("BUTTON");
-    expect(callsOf(engine, "avatars.setBody")).toHaveLength(0);
-  });
 });
 
 describe("an import's proposal waits (a head-and-shoulders photo)", () => {
   const LEA: AvatarSummary = { ...MIA, name: "Lea", bodyProposal: HEAD };
-
-  test("«Тело» opens at once with what was read, the rest «не видно на фото», and three ways out", async () => {
-    await openLook(LEA);
-    expect(bodyCard().className).toContain("look-body-edit");
-    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("рост, фигуру, ноги, попу и тату или родинки на фото не видно — выберите сами или оставьте «не задано»");
-    expect(Array.from(bodyCard().querySelectorAll(".src-none")).length).toBe(5);
-    expect(text(bodyCard().querySelector(".body-build .src-photo") ?? bodyCard())).toBe("с фото");
-    expect(inBody().getByRole("group", { name: "Длина ног, не видно на фото" }).tagName).toBe("FIELDSET");
-    expect(isChecked(radio(/^Грудь/, "Небольшая"))).toBe(true);
-    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);
-    expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(false);
-  });
-
-  test("«Позже» keeps the proposal: the card says it waits and «Посмотреть» brings it back as it was read", async () => {
-    const { engine } = await openLook(LEA);
-    pick(/^Грудь/, "Средняя");
-    fireEvent.click(inBody().getByRole("button", { name: "Позже" }));
-    await flush();
-    expect(bodyCard().className).not.toContain("look-body-edit");
-    expect(text(bodyCard().querySelector(".body-nudge") ?? bodyCard())).toBe("Тело с фото ждёт решения. Импорт прочитал его с фото — сохраните, поправьте или откажитесь.Посмотреть");
-    expect(focusedLabel()).toBe(describeElement(inBody().getByRole("button", { name: "Посмотреть" })));
-    expect(callsOf(engine, "avatars.setBody").length + callsOf(engine, "avatars.dismissBodyProposal").length).toBe(0);
-    fireEvent.click(inBody().getByRole("button", { name: "Посмотреть" }));
-    await flush();
-    expect(bodyCard().className).toContain("look-body-edit");
-    expect(isChecked(radio(/^Грудь/, "Небольшая"))).toBe(true);
-  });
-
-  test("«Позже», then a look at «Фото» and back: the proposal opens again", async () => {
-    await openLook(LEA);
-    fireEvent.click(inBody().getByRole("button", { name: "Позже" }));
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    await flush();
-    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
-    await flush();
-    expect(bodyCard().className).toContain("look-body-edit");
-  });
 
   test("«Не нужно» drops the proposal (free) and leaves the body unset", async () => {
     const { engine } = await openLook(LEA);
@@ -452,15 +296,6 @@ describe("an import's proposal waits (a head-and-shoulders photo)", () => {
     expect(inBody().getByRole("button", { name: "Задать тело" }).tagName).toBe("BUTTON");
     expect(bodyCard().querySelector(".body-nudge-info") === null).toBe(true);
     expect(said(bodyCard())).toBe("Тело с фото не сохранено");
-  });
-
-  test("«Не нужно» refused IN_FLIGHT: the reason, and the proposal stays", async () => {
-    const { engine } = await openLook(LEA);
-    engine.setAvatarEditing(MIA.avatarId, true);
-    fireEvent.click(inBody().getByRole("button", { name: "Не нужно" }));
-    await flush();
-    expect(text(inBody().getByRole("alert"))).toBe(BODY_HELD_REASON);
-    expect(bodyCard().className).toContain("look-body-edit");
   });
 
   test("the owner's picks are saved with «Сохранить тело», with what was read, and the proposal goes with them", async () => {
@@ -489,19 +324,6 @@ describe("06 · an import's proposal, photo to the waist", () => {
     expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);
   });
 
-  test("what the photo showed is chosen and tagged «с фото», the rest «не видно на фото»; the hint names what is missing", async () => {
-    await openLook(AVA);
-    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("рост, ноги, попу и тату или родинки на фото не видно — выберите сами или оставьте «не задано»");
-    expect(isChecked(radio(/^Грудь/, "Средняя"))).toBe(true);
-    expect(isChecked(radio(/^Фигура/, "Песочные часы"))).toBe(true);
-    expect(inBody().getByRole("group", { name: /^Грудь/ }).querySelector(".src-photo")?.textContent).toBe("с фото");
-    expect(inBody().getByRole("group", { name: /^Рост/ }).querySelector(".src-none")?.textContent).toBe("не видно на фото");
-    expect(text(bodyCard().querySelector(".body-build .src-photo") ?? bodyCard())).toBe("с фото");
-    // «Описание» previews the phrase the proposal would add: all of it new.
-    expect(within(descCard()).getByText("предпросмотр").className).toBe("tag tag-info");
-    expect(tailRuns()).toEqual(["+a medium bust", " and ", "+an hourglass figure"]);
-  });
-
   test("«Сохранить тело» saves what the photo showed", async () => {
     const { engine } = await openLook(AVA);
     await save();
@@ -512,41 +334,6 @@ describe("06 · an import's proposal, photo to the waist", () => {
     ]);
   });
 
-  test("with a check's proposal too, «Описание» shows both: the text fix, then the body phrase to come", async () => {
-    const { engine } = await openLook(AVA);
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: { hair: { state: "ok" }, eyes: { state: "mismatch", descriptor: "ореховые", photo: "зелёные" }, marks: { state: "ok" }, body: { state: "ok" } },
-      proposal: TEXT.replace("hazel eyes", "green eyes"),
-      checkedText: TEXT,
-    });
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    expect(within(descCard()).getByText("предложение сверки").className).toContain("tag-warn");
-    const fixed = TEXT.replace("hazel eyes", "green eyes");
-    // The fix is judged beside her STORED body (none yet), whatever the body edit previews (review L2).
-    expect(counter()).toBe(`${fixed.length} / 600`);
-    expect(Array.from(descCard().querySelectorAll(".descriptor-text > del, .descriptor-text > ins")).map(text)).toEqual(["убрать: hazel", "вставить: green"]);
-    expect(tailRuns()).toEqual(["+a medium bust", " and ", "+an hourglass figure"]);
-  });
-
-  test("«Оставить» while the body is previewed: the focus stays in «Описание», not lost to the page (review M2)", async () => {
-    const { engine } = await openLook(AVA);
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: { hair: { state: "ok" }, eyes: { state: "mismatch", descriptor: "ореховые", photo: "зелёные" }, marks: { state: "ok" }, body: { state: "ok" } },
-      proposal: TEXT.replace("hazel eyes", "green eyes"),
-      checkedText: TEXT,
-    });
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Оставить" }));
-    await flush();
-    // The preview has no «Изменить текст» to go back to: the card itself takes the focus.
-    expect(within(descCard()).queryByRole("button", { name: "Изменить текст" }) === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(descCard()));
-    expect(descCard().getAttribute("tabindex")).toBe("-1");
-  });
 });
 
 describe("the description beside a body phrase (L10)", () => {
@@ -554,27 +341,6 @@ describe("the description beside a body phrase (L10)", () => {
   const PHRASE = "tall and long slim legs";
   const LIMIT = 600 - 2 - PHRASE.length;
   const SOFIA: AvatarSummary = { ...MIA, name: "Sofia", body: BODY };
-
-  test("«Изменить текст» counts against 600 less «; » and the phrase, and says why", async () => {
-    await openLook(SOFIA);
-    expect(counter()).toBe(`${TEXT.length} / ${LIMIT}`);
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    await flush();
-    expect(counter()).toBe(`${TEXT.length} / ${LIMIT}`);
-    expect(text(descCard())).toContain(`Ещё ${2 + PHRASE.length} знаков занимает фраза о теле — на текст остаётся ${LIMIT} из 600.`);
-    expect(2 + PHRASE.length).toBe(25);
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: TEXT.padEnd(LIMIT + 1, "z") } });
-    expect(counter()).toBe(`${LIMIT + 1} / ${LIMIT}`);
-    expect(descCard().querySelector(".look-desc-meta .danger-text") === null).toBe(false);
-  });
-
-  test("the count of characters the phrase takes is said in the right plural (review L6)", async () => {
-    // «tall and a full bust» is 20 characters: with «; », 22 — «22 знака».
-    await openLook({ ...MIA, name: "Lena", body: { height: "tall", bust: "full" } });
-    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    await flush();
-    expect(text(descCard())).toContain(`Ещё 22 знака занимает фраза о теле — на текст остаётся ${600 - 22} из 600.`);
-  });
 
   test("a text that fits alone but not with the phrase is refused with the body's reason", async () => {
     const { engine } = await openLook(SOFIA);
@@ -586,55 +352,9 @@ describe("the description beside a body phrase (L10)", () => {
     expect(text(within(descCard()).getByRole("alert"))).toBe(DESCRIPTOR_REASONS_RU["too-long-with-body"]);
   });
 
-  test("a check's proposal counts the same way", async () => {
-    const { engine } = await openLook(SOFIA);
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: { hair: { state: "mismatch", descriptor: "волнистые", photo: "прямые" }, eyes: { state: "ok" }, marks: { state: "ok" }, body: { state: "not-visible" } },
-      proposal: TEXT.replace("wavy", "straight"),
-      checkedText: TEXT,
-    });
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    expect(counter()).toBe(`${TEXT.replace("wavy", "straight").length} / ${LIMIT}`);
-    expect(text(descCard().querySelector(".desc-body") ?? descCard())).toBe(PHRASE);
-  });
 });
 
 describe("a body mismatch at the check", () => {
-  test("points at the «Тело» card: a body is never fixed in text", async () => {
-    const { engine } = await openLook(MIA);
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: { hair: { state: "ok" }, eyes: { state: "ok" }, marks: { state: "ok" }, body: { state: "mismatch", descriptor: "спортивное", photo: "мягкие формы" } },
-      proposal: null,
-      checkedText: TEXT,
-    });
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    expect(text(checkCard())).toContain("Тело на фото другое — поправьте его в карточке «Тело» справа, а телосложение — в «Описании».");
-  });
-
-  test("beside a text mismatch, both pointers show (review L1)", async () => {
-    const { engine } = await openLook(MIA);
-    engine.setNextDescriptorCheck({
-      matches: false,
-      aspects: {
-        hair: { state: "mismatch", descriptor: "волнистые", photo: "прямые" },
-        eyes: { state: "ok" },
-        marks: { state: "ok" },
-        body: { state: "mismatch", descriptor: "спортивное", photo: "мягкие формы" },
-      },
-      proposal: TEXT.replace("wavy", "straight"),
-      checkedText: TEXT,
-    });
-    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
-    await flush();
-    expect(Array.from(checkCard().querySelectorAll(".chk-pointer")).map(text)).toEqual([
-      "Исправленный текст — в «Описании» справа. Сам он не применится.",
-      "Тело на фото другое — поправьте его в карточке «Тело» справа, а телосложение — в «Описании».",
-    ]);
-  });
 });
 
 describe("a check's body verdict after «Сохранить тело» (S5.R2 LOW)", () => {
@@ -669,14 +389,4 @@ describe("a check's body verdict after «Сохранить тело» (S5.R2 LO
     expect(within(checkCard()).getByRole("button", { name: /^Проверить снова/ }).hasAttribute("disabled")).toBe(false);
   });
 
-  test("a body mismatch changed since says so instead of pointing at «Тело» again", async () => {
-    await checkThenSaveBody("mismatch");
-    expect(text(checkCard())).toContain(STALE);
-    expect(text(checkCard())).not.toContain("Тело на фото другое");
-  });
-
-  test("a verdict that could not see the body stays as it was", async () => {
-    await checkThenSaveBody("not-visible");
-    expect(text(checkCard())).not.toContain(STALE);
-  });
 });

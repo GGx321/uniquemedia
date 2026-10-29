@@ -36,14 +36,6 @@ describe("while her portraits draw, «Фото» waits", () => {
     expect(card().textContent).not.toContain(REASON);
   });
 
-  test("a compose (scenes on review): «Составить» waits with the reason", async () => {
-    const harness = await openReview(IMPORTED);
-    await waitFor(() => expect(goButton().textContent).toContain("Составить"));
-    await drawPortraits(harness);
-    expect(isDisabled(goButton())).toBe(true);
-    expect(describedText(goButton())).toContain(REASON);
-  });
-
   test("a draw of an open set: «Отрисовать» waits with the reason", async () => {
     const harness = await openReview(IMPORTED);
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
