@@ -48,7 +48,7 @@
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { holdsTierTests, untieredTests } from "../testing/tierSources";
+import { holdsTierTests, sweepTestLines, untieredTests } from "../testing/tierSources";
 import { type Tier, tierOf, tierPattern, tierTag } from "../testing/tiers";
 
 export const MAX_ATTEMPTS = 3;
@@ -273,7 +273,7 @@ export function commandLineLength(args: readonly string[]): number {
  * files (the flags, then its files), dealt by `times` (shardFiles). Every file is on the command line, so a shard whose line would pass Windows'
  * limit throws here, in the plan, and not as a spawn error on the Windows runner after the other shards ran.
  * The `*.heavy.test.*` files are left out (HEAVY_TEST_FILE); one that holds a test the heavy run does not select, or no heavy test at all,
- * throws here, since that test would run nowhere.
+ * throws here, since that test would run nowhere (a `sweepTest` too: its push variant is not [heavy]; use `heavyTest`).
  */
 export async function shardedTestArgs(testArgs: readonly string[], shards: number, cwd: string, times: FileTimes = {}): Promise<string[][]> {
   if (shards <= 1) return [[...testArgs]];
@@ -286,6 +286,8 @@ export async function shardedTestArgs(testArgs: readonly string[], shards: numbe
       continue;
     }
     const source = await readFile(resolve(cwd, file), "utf8");
+    const sweeps = sweepTestLines(source, file);
+    if (sweeps.length > 0) throw new Error(`realWorkerTests: ${file} is left out of the blocking run by its name, but the sweepTest at line ${sweeps.join(", ")} has a push variant that would run nowhere: use heavyTest`);
     const untiered = untieredTests(source, "heavy", file);
     if (untiered.length > 0 || !holdsTierTests(source, "heavy", file)) {
       const what = untiered.length > 0 ? `the tests at line ${untiered.join(", ")} are not [heavy]` : "it holds no [heavy] test";

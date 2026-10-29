@@ -163,10 +163,10 @@ describe("sharding the suite", () => {
     expect(await shardedTestArgs(["./studio"], 2, root)).toEqual([["./studio/a.test.ts"], ["./studio/c.test.ts"]]);
   });
 
-  test("a sweepTest counts as a heavy test: a *.heavy.test.* file made of sweeps is accepted, and the blocking run leaves it out", async () => {
+  test("shardedTestArgs refuses a sweepTest in a *.heavy.test.* file, which the blocking run leaves out whole: its push variant would run nowhere (use heavyTest)", async () => {
     const root = await tree(["studio/a.test.ts", "studio/c.test.ts"]);
     await writeFile(join(root, "studio", "b.heavy.test.ts"), 'sweepTest("seeds", { push: 1, heavy: 2 }, () => {});');
-    expect(await shardedTestArgs(["./studio"], 2, root)).toEqual([["./studio/a.test.ts"], ["./studio/c.test.ts"]]);
+    await expect(shardedTestArgs(["./studio"], 2, root)).rejects.toThrow(/b\.heavy\.test\.ts .*sweepTest.*use heavyTest/);
   });
 
   test("shardedTestArgs refuses a *.heavy.test.* file with a test outside the heavy tier, or with no heavy test at all: that test would run nowhere", async () => {
