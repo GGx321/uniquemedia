@@ -631,6 +631,25 @@ test("a resume refused with PRICE_CHANGED shows the new price and asks again", a
   ]);
 });
 
+test("a resume's PRICE_CHANGED also reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  harness.engine.setRunImagePrice(60_000);
+  harness.engine.delayNext("runs.estimateResume", 50);
+
+  fireEvent.click(resume);
+  await waitFor(() => expect(callsOf(harness.engine, "runs.estimateResume")).toHaveLength(2));
+
+  harness.engine.setRunImagePrice(50_000); // back to exactly what was accepted, before the reprice answers
+  tick(harness.scheduler, 1);
+
+  await screen.findByText("Цена изменилась");
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
+  expect(await screen.findByRole("button", { name: "Подтвердить новую цену · до $0.60" })).toBeDefined();
+});
+
 test("a resume stays busy through its PRICE_CHANGED re-price, and a double click sends one resume", async () => {
   const harness = setup({ avatars: [MIA] });
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
@@ -727,6 +746,33 @@ test("an older estimateResume answer landing after a newer one must not win the 
   expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK) === null).toBe(true);
 });
 
+test("a reconcileNeeded flip while this row's own resume is in flight does not clobber its busy state, and re-asks once it is done (N3)", async () => {
+  const { engine, scheduler } = setup({ avatars: [MIA] });
+  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  const asksBefore = callsOf(engine, "runs.estimateResume").length;
+
+  engine.delayNext("runs.resume", 300);
+  fireEvent.click(resume);
+  await flush();
+  expect(document.querySelector(".photos-run-go")?.textContent).toBe("Продолжаем… · до $0.60");
+
+  act(() => engine.requireReconcile(["open-reserves"]));
+  await flush();
+
+  // Still sending — not clobbered into "Считаем…", nor a disabled, no-longer-busy "Продолжить".
+  expect(document.querySelector(".photos-run-go")?.textContent).toBe("Продолжаем… · до $0.60");
+  expect(document.querySelector(".photos-run-go")?.getAttribute("aria-busy")).toBe("true");
+  // Deferred, not dropped: no re-ask has actually been sent while the resume is still in flight.
+  expect(callsOf(engine, "runs.estimateResume")).toHaveLength(asksBefore);
+
+  tick(scheduler, 1); // the resume itself answers now (RECONCILE_REQUIRED by then, the reconcile flip having landed first)
+  await flush();
+  // The deferred re-ask finally runs once the send is done.
+  expect(callsOf(engine, "runs.estimateResume").length).toBeGreaterThan(asksBefore);
+});
+
 test("a run whose cap is used up is shown as ended: a plain summary with no button, nothing priced and nothing to resume (L6)", async () => {
   const harness = setup({ avatars: [MIA] });
   // 8 done slots at $0.05 each settled $0.40; the cap is seeded at exactly that, leaving nothing for the 4 open slots.
@@ -776,6 +822,23 @@ test("a failed photos.list is shown with a retry", async () => {
   await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
   expect(await screen.findByText("лицо не проверялось")).toBeDefined();
+});
+
+test("the sidebar's «Фото» with no avatar named pins its resolved avatar: another window archiving it does not silently switch the screen (L11)", async () => {
+  const { client } = setup({ avatars: [MIA, SOFIA] });
+  await openSection("Фото");
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  await priced();
+
+  // Another window archives the avatar this one resolved to and pinned.
+  await act(async () => {
+    await client.request("avatars.archive", { avatarId: MIA.avatarId });
+  });
+
+  // Still Mia — archived now, not silently switched to Sofia (the new "first active").
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
+  expect(screen.queryByRole("heading", { level: 1, name: "Sofia" }) === null).toBe(true);
 });
 
 // ---------- later stages, marked ----------
