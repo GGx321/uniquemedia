@@ -809,7 +809,8 @@ describe("the records through the service", () => {
     const listed = await r.service.list();
     await r.service.delete(listed.media[0]?.mediaId ?? "");
     expect(await readFile(victim, "utf8")).toBe("the owner's data");
-    expect(await readdir(libraryRoot())).toEqual(["library.json", "media"]);
+    // readdir has no order of its own (ext4 on Linux lists by hash, APFS and NTFS by name): the set of names is the claim.
+    expect((await readdir(libraryRoot())).sort()).toEqual(["library.json", "media"]);
     await rm(victim);
   });
 });
