@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { AGE_PROBES } from "../../shared/scenes/ageProbes.testkit";
 import {
   GOOD_TEXTS,
+  NOT_MOTION,
   SUGGEST,
   SUGGEST_ATTEMPT,
   UNDRESS,
+  UNREADABLE,
   BOLD,
   PLAIN,
   errorOf,
@@ -74,6 +76,74 @@ describe("clips.suggestMotions: the money", () => {
     expect((await money(m)).spentMicros).toBe(0);
   });
 
+});
+
+describe("clips.suggestMotions: the second attempt fails", () => {
+  test("a TIMEOUT on the first attempt is an error, free of cost to tell, and its reserve stays open at its worst case", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "timeout" }]);
+    expect((await errorOf(suggest(m))).code).toBe("TIMEOUT");
+    expect(m.engine.peekMotions().lines.map((l) => [l.state, l.worstMicros])).toEqual([["open", SUGGEST_ATTEMPT]]);
+    const status = await money(m);
+    expect([status.spentMicros, status.unsettledMicros, status.unsettledCount]).toEqual([0, SUGGEST_ATTEMPT, 1]);
+  });
+
+  test("a TIMEOUT on the second attempt after a paid first one is still an error (the reserve may have been billed): both stay told", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "timeout" }]);
+    expect((await errorOf(suggest(m))).code).toBe("TIMEOUT");
+    expect(m.engine.peekMotions().lines.map((l) => l.state)).toEqual(["settled", "open"]);
+  });
+
+  test("a 5xx on the second attempt after a paid first one is `none` with what the first cost", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 503 }]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 2_000 });
+    expect((await money(m)).unsettledMicros).toBe(0);
+  });
+
+  test("a 5xx on the first attempt is an error: nothing was paid", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "http", status: 500 }]);
+    expect((await errorOf(suggest(m))).code).toBe("NETWORK");
+  });
+
+  test("a refused key on the second attempt is an error, and the key is marked rejected", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 401 }]);
+    expect((await errorOf(suggest(m))).code).toBe("AUTH_INVALID");
+    const settings = await unwrap(m.client.request("settings.get", {}));
+    expect(settings.apiKey.rejected).toBe(true);
+  });
+
+  test("no credits on the second attempt is an error too", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 402 }]);
+    expect((await errorOf(suggest(m))).code).toBe("INSUFFICIENT_CREDITS");
+  });
+
+  test("a paid body that is no chat answer at all ends the call at once, settled at the attempt's worst case", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "unusable-body" }, suggestion(GOOD_TEXTS.slice(0, 1))]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: SUGGEST_ATTEMPT });
+    expect(m.engine.peekMotions().lines).toMatchObject([{ state: "settled", costMicros: SUGGEST_ATTEMPT, estimated: true }]);
+  });
+});
+
+describe("clips.translateIdea", () => {
+  test("a 5xx on the repair after a paid answer that failed the check is `rejected` with what the first cost", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "http", status: 500 }]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: ["not-motion"], costMicros: 1_000 });
+  });
+
+  test("a timeout on the repair is an error and leaves its reserve open", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "timeout" }]);
+    expect((await errorOf(translate(m))).code).toBe("TIMEOUT");
+    // The repair carries the closed codes and the previous text, so its reserve is above the first attempt's (the real ledger agrees: money.test.ts).
+    expect((await money(m)).unsettledMicros).toBe(13_344);
+  });
 });
 
 describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts), as the engine's, on an ordinary frame and on «Смелая»", () => {

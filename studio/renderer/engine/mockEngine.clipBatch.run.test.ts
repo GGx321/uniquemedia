@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createBatch, detailOf, endOf, endsOf, makeBatchMock, money, mostOpenReserves, phasesOf, runUntilEnds, script, startBatch, stepUntil, unwrap, AVATAR } from "./mockEngine.clipBatch.testkit";
+import { createBatch, detailOf, endOf, endsOf, makeBatchMock, money, mostOpenReserves, phasesOf, refusal, runUntilEnds, script, startBatch, stepUntil, unwrap, AVATAR } from "./mockEngine.clipBatch.testkit";
 
 // Stage 5, 5b.2, S5.WB3 (plan s5b2 §5.2.2, I5.61-I5.63): a batch in the mock, one member at a time. The reference is the engine (engine.clipBatch.run.test.ts); every number is one of its numbers.
 
@@ -80,9 +80,46 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
   });
 
+  test("a defect before any reserve stops the queue `cancelled`, not `ledger-stopped`: nothing is open, so no reconcile is asked for (WB2d, L1)", async () => {
+    const m = makeBatchMock(3);
+    script(m, ["fault-early"]);
+    const { jobIds } = await startBatch(m, m.photoIds);
+    runUntilEnds(m, jobIds);
+    expect(types(m, jobIds)).toEqual(["job.failed", "job.cancelled", "job.cancelled"]);
+    expect(endOf(m.events, jobIds[0] ?? "")).toMatchObject({ payload: { error: { code: "INTERNAL" } } });
+    expect(rest(m, jobIds)).toEqual(["cancelled", "cancelled"]);
+    expect(m.engine.peekClips().posts).toHaveLength(0);
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    expect((await money(m)).unsettledMicros).toBe(0);
+  });
+
+  test("after an uncertain submit a new batch is refused RECONCILE_REQUIRED, free, while the clip's reserve is open (WB2d, L2)", async () => {
+    const m = makeBatchMock(3);
+    script(m, ["uncertain"]);
+    const { jobIds } = await startBatch(m, m.photoIds.slice(0, 1));
+    runUntilEnds(m, jobIds);
+    const posts = m.engine.peekClips().posts.length;
+
+    expect(await refusal(createBatch(m, m.photoIds.slice(1)))).toMatchObject({ code: "RECONCILE_REQUIRED" });
+    expect(m.engine.peekClips().posts).toHaveLength(posts);
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    expect((await money(m)).unsettledMicros).toBe(504_000);
+  });
+
   // A member's month is held at the batch's create, so no other job can take its room afterwards (every paid command counts the holds: mockEngine.clipBatch.edges.test.ts). The one reserve that can meet a
   // month with no room is a member requeued after a 429, which takes no hold: that path is pinned there.
 
+});
+
+describe("a 429 at the submit (L11)", () => {
+  test("the retry takes no month hold: its reserve checks the month itself", async () => {
+    const m = makeBatchMock(1);
+    script(m, ["rate-limited", "ok"]);
+    const { jobIds } = await startBatch(m, m.photoIds);
+    stepUntil(m, () => m.events.some((e) => e.type === "job.progress" && e.payload.kind === "clip" && !jobIds.includes(e.payload.jobId)), "the retry's announcement");
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    stepUntil(m, () => m.engine.peekClips().unit === null, "the end of the batch");
+  });
 });
 
 describe("a restart in the middle of a batch (I5.63)", () => {

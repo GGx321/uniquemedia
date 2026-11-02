@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { holdsFromLedger, planRecovery } from "../../engine/clips/recover";
 import { summarizeJournal } from "../../engine/clips/journal";
 import { REAL_CLIP_TIMINGS } from "../../engine/clips/timings";
+import { MOCK_CLIP_TIMINGS, mockRecoveryPlan } from "./mockClips";
+import type { ClipJournalLine } from "../../engine/clips/schemas";
 import { create, makeClipMock, money, onlyClip, phasesOf, reconcile, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
 
 // Stage 5, 5b.1, S5.V7 (plan §5.12, I5.48, I5.49): `restart()` with a clip in flight. The mock's journal lines are the engine's (the same strict schema), so each fixture below is a journal the
@@ -65,6 +67,43 @@ describe("a clip that was submitted and had no end (`rendering`, `proving`, `lat
 
 // VR item 2: a journal whose attempt ended at the POST (a 4xx the provider refused, settled 0) has an `ended` line and no `submitted` line. The mock's recovery plan reads it as the engine's does. The
 // window is closed in both (the record follows the `ended` line at once), so the lines are written by hand and the two plans are asked about the very same journal.
+describe("a journal whose attempt ended at the POST (VR item 2)", () => {
+  const CLIP = "clip-00000001";
+  const KLING = `${CLIP}:video#1`;
+  const T = Date.parse("2026-10-13T12:00:00.000Z");
+  const requested: ClipJournalLine = {
+    type: "requested",
+    clipId: CLIP,
+    photoId: "photo-00000001",
+    request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+    motion: { source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" },
+    acceptedWorstMicros: 850_000,
+    at: new Date(T).toISOString(),
+  };
+  const ended = (status: "refused" | "failed", failReason?: "rate-limited" | "key-invalid" | "no-credits" | "bad-request"): ClipJournalLine => ({
+    type: "ended",
+    attemptId: KLING,
+    status,
+    costSource: "none",
+    ...(failReason === undefined ? {} : { failReason }),
+    at: new Date(T + 1_000).toISOString(),
+  });
+
+  test.each([
+    ["a moderation refusal", ended("refused"), "refused-free"],
+    ["a 429", ended("failed", "rate-limited"), "rate-limited"],
+    ["a 401", ended("failed", "key-invalid"), "key-invalid"],
+    ["a 402", ended("failed", "no-credits"), "no-credits"],
+    ["another 4xx", ended("failed", "bad-request"), "bad-request"],
+    ["a 4xx whose line names no reason", ended("failed"), "bad-request"],
+  ] as const)("%s: the mock and the engine both plan the failed record with that reason, not `lost`", (_name, line, reason) => {
+    const lines = [requested, line];
+    const engine = planRecovery({ summary: summarizeJournal(lines), recordExists: false, reservedAttempts: new Set([KLING]), nowMs: T + 5 * 60_000, timings: REAL_CLIP_TIMINGS });
+    const mock = mockRecoveryPlan(lines as never, new Set([KLING]), T + 5 * 60_000, MOCK_CLIP_TIMINGS.real);
+    expect(engine).toEqual({ kind: "fail", reason, model: "kling" });
+    expect(mock).toEqual({ kind: "fail", reason, model: "kling" });
+  });
+});
 
 // VR item 3 (engine/clips/recover.ts `refusalReason`): the old process settled the refused attempt in the ledger and stopped before the journal's `ended` line. The recovery takes the record's reason
 // from that settle, and writes no ledger line of its own.
@@ -86,6 +125,25 @@ describe("a content refusal the old process had already settled when it stopped 
     expect(await money(m)).toMatchObject({ unsettledMicros: 0, reconcileNeeded: false });
   });
 
+  test("a settle at the worst case is recorded `refused-unknown`", async () => {
+    const { m } = await restartedAfterSettle({ costMicros: 504_000, estimated: true });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" }, cost: { micros: 504_000, kind: "estimated" } });
+  });
+
+  test("a settle of what the provider billed is recorded `refused-paid`", async () => {
+    const { m } = await restartedAfterSettle({ costMicros: 420_000, estimated: false });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-paid" }, cost: { micros: 420_000, kind: "billed" } });
+  });
+
+  test("with the reserve still open the record stays `refused-unknown`, for the reconcile to settle at worst", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("refused-free");
+    const { jobId } = await unwrap(create(m, { fallback: "none", acceptedWorstMicros: 504_000 }));
+    stepUntil(m, "proving", jobId);
+    m.engine.restart();
+    m.scheduler.runAll();
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" } });
+  });
 });
 
 // VR item 6: the engine never writes `ended {status: "uncertain"}` (an uncertain submit leaves the journal at `requested`, attempt.table.test.ts row 5): a restart reads such a line as «ended: held 2 min»,
