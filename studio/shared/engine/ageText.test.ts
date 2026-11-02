@@ -188,6 +188,16 @@ describe("youth words", () => {
     expect(misses(rows, (text) => isYouth(`she slowly undresses ${text}`, "descriptor"), () => true)).toEqual([]);
   });
 
+  test("a glued «oldschool» style word is not a youth word, in the descriptor's stricter set too", () => {
+    expect(youthWords("oldschool look", "descriptor")).toEqual([]);
+    expect(youthWords("an oldschool vibe", "descriptor")).toEqual([]);
+  });
+
+  test("«school» and «schoolgirl» are still youth words in the descriptor's stricter set", () => {
+    expect(isYouth("a school photo", "descriptor")).toBe(true);
+    expect(isYouth("a schoolgirl look", "descriptor")).toBe(true);
+  });
+
   test("ordinary words never read as youth words, even in the descriptor's stricter set", () => {
     const rows = [
       "Little Italy", "a studio portrait", "a classic look", "a classy look", "old-school glamour", "kidney-shaped pool", "the minority of days",
