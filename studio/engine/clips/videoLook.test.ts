@@ -283,6 +283,7 @@ describe("the continuity line (critic M5, r2.2; the controller's round 2)", () =
     // A stretch of her arm is not a sleeve: only the exact «slides one arm in» puts one on.
     ["she pulls her arm in a little", null],
     // A bag is held, not worn (K09 lost its bag): its zip and its strap keep the base line, whether the motion or the moment names the bag.
+    ["she zips the bag slowly", null],
     ["she tugs the strap a little", "adjusts the strap of her bag"],
     ["she shifts against the glass a bit", null],
     ["she slowly turns her head toward them", null],
