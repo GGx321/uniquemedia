@@ -13,6 +13,7 @@ import {
 import type { MockTrackSeed } from "./mockMusicStore";
 import { PAID_FAULTS } from "./mockLaunchRun";
 import { heavyTest, sweepTest } from "../../testing/bunTiers";
+import { mustHold, seedOutcomes } from "../../testing/seedOutcomes";
 import { draftOf, LLM_ONLY_REF, MIA, runWorld, SOFIA, track, unwrap, type Mock } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.8: the mock's view must pass the SAME contract refines as the engine's, in every state it can reach. The S4.6v review fuzzed the engine's view; this does the same to the
@@ -46,7 +47,7 @@ interface Seen {
   dropReasons: Set<string>;
 }
 
-const seen: Seen = {
+const freshSeen = (): Seen => ({
   statuses: new Set(),
   holds: new Set(),
   waits: new Set(),
@@ -59,7 +60,7 @@ const seen: Seen = {
   pausedCauses: new Set(),
   skipped: false,
   dropReasons: new Set(),
-};
+});
 
 const CATEGORIES: LaunchDraftInput["mix"][] = [
   { single: 50, collage: 25, slides: 25 },
@@ -75,7 +76,7 @@ function randomTracks(next: () => number): MockTrackSeed[] {
 
 const DRAWN_FAULTS = PAID_FAULTS.filter((fault) => fault !== "job-failed");
 
-async function fuzzOne(seed: number, steps: number): Promise<void> {
+async function fuzzOne(seed: number, steps: number, seen: Seen): Promise<void> {
   const next = mulberry32(seed);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
   const trail: string[] = [];
@@ -270,28 +271,47 @@ async function fuzzOne(seed: number, steps: number): Promise<void> {
   }
 }
 
+const STEPS = 60;
+const SEEDS = Array.from({ length: 80 }, (_, i) => 1_000 + i * 37);
+
+/** One seed's fuzz run: the invariants after every step (thrown if one breaks) and the vocabulary it reached. Memoised, so the coverage test below needs no sibling to have run first. */
+const fuzzed = seedOutcomes<number, Seen>(freshSeen, (seed, seen) => fuzzOne(seed, STEPS, seen));
+
 describe("fuzz: the mock's view meets the contract in every state it reaches", () => {
-  const SEEDS = Array.from({ length: 80 }, (_, i) => 1_000 + i * 37);
   // Push: every tenth seed (8 of the 80). Heavy: all 80 seeds, as before. The seeds a push skips are heavy tests of their own.
   SEEDS.forEach((seed, i) => {
-    if (i % 10 === 0) sweepTest(`seed ${seed}`, { push: { seed }, heavy: { seed } }, async (params) => fuzzOne(params.seed, 60));
-    else heavyTest(`seed ${seed}`, async () => fuzzOne(seed, 60));
+    if (i % 10 === 0) sweepTest(`seed ${seed}`, { push: { seed }, heavy: { seed } }, async (params) => void (await mustHold(fuzzed(params.seed))));
+    else heavyTest(`seed ${seed}`, async () => void (await mustHold(fuzzed(seed))));
   });
 
-  // The coverage of the whole vocabulary needs every seed, so it runs in the heavy run, after the 80 seeds above.
-  heavyTest("the runs between them reached every status, hold, wait, phase and reason the mock claims to reach", () => {
-    expect([...seen.statuses].sort()).toEqual([...LAUNCH_STATUSES].sort());
-    expect([...seen.holds].sort()).toEqual([...PAID_HOLD_REASONS].sort());
-    expect([...seen.waits].sort()).toEqual([...WaitingReason.options].sort());
-    expect([...seen.phases].sort()).toEqual([...AVATAR_PHASES].sort());
-    expect([...seen.blockedBy].sort()).toEqual(["budget", "halt", "internal", "key", "network", "reconcile-required"].sort());
-    expect(seen.freeHolds.has("missing")).toBe(true);
-    expect(seen.freeHolds.has("not-enough-space")).toBe(true);
-    expect(seen.waitingMusic).toBe(true);
-    expect(seen.unsettled).toBe(true);
-    expect(seen.inFlight).toBe(true);
-    expect([...seen.pausedCauses].sort()).toEqual(["engine-restart", "owner", "quit"]);
-    expect(seen.skipped).toBe(true);
-    expect(seen.dropReasons.has("launch-stopped")).toBe(true);
-  });
+  // The coverage of the whole vocabulary needs every seed. It walks them itself (reusing the walks the seed tests made, in whatever order they ran), so it holds alone and in any order; it is heavy because
+  // the 72 seeds a push skips are walked here when no sibling has.
+  heavyTest(
+    "the runs between them reached every status, hold, wait, phase and reason the mock claims to reach",
+    async () => {
+      const seen = freshSeen();
+      for (const seed of SEEDS) {
+        const reached = (await fuzzed(seed)).collected;
+        for (const key of ["statuses", "holds", "waits", "phases", "blockedBy", "freeHolds", "pausedCauses", "dropReasons"] as const) for (const value of reached[key]) seen[key].add(value);
+        seen.waitingMusic ||= reached.waitingMusic;
+        seen.unsettled ||= reached.unsettled;
+        seen.inFlight ||= reached.inFlight;
+        seen.skipped ||= reached.skipped;
+      }
+      expect([...seen.statuses].sort()).toEqual([...LAUNCH_STATUSES].sort());
+      expect([...seen.holds].sort()).toEqual([...PAID_HOLD_REASONS].sort());
+      expect([...seen.waits].sort()).toEqual([...WaitingReason.options].sort());
+      expect([...seen.phases].sort()).toEqual([...AVATAR_PHASES].sort());
+      expect([...seen.blockedBy].sort()).toEqual(["budget", "halt", "internal", "key", "network", "reconcile-required"].sort());
+      expect(seen.freeHolds.has("missing")).toBe(true);
+      expect(seen.freeHolds.has("not-enough-space")).toBe(true);
+      expect(seen.waitingMusic).toBe(true);
+      expect(seen.unsettled).toBe(true);
+      expect(seen.inFlight).toBe(true);
+      expect([...seen.pausedCauses].sort()).toEqual(["engine-restart", "owner", "quit"]);
+      expect(seen.skipped).toBe(true);
+      expect(seen.dropReasons.has("launch-stopped")).toBe(true);
+    },
+    600_000,
+  );
 });

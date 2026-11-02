@@ -56,6 +56,17 @@ export function useEngineDir(prefix: string): () => string {
   return () => dir;
 }
 
+/** A directory of its own for one walk that is not a test (a memoised seed walk): made with a `library` folder, removed when the walk ends, however it ends. */
+export async function withEngineDir<T>(prefix: string, walk: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    await mkdir(join(dir, "library"));
+    return await walk(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export function engineInit(dir: string, overrides: Partial<EngineInit> = {}): EngineInit {
   return {
     kind: "control",

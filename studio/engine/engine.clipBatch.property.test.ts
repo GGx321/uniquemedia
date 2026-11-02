@@ -3,7 +3,8 @@ import { batchOf, cancelBatch, createBatch, jobsOf, mostOpenClipReserves, plainP
 import { clipNetwork, command, create, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
 import { chatReply, MODERATED, motionNetwork, type ChatHandler } from "./clips/testing/motionNet";
 import { GOOD_TEXTS, IDEA, motionWorld } from "./clips/testing/motionWorld";
-import { ledgerLines, useEngineDir } from "./testing/engineHarness";
+import { ledgerLines, withEngineDir } from "./testing/engineHarness";
+import { mustHold, seedOutcomes } from "../testing/seedOutcomes";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { join } from "node:path";
 useNativeGlobals();
@@ -14,8 +15,6 @@ useNativeGlobals();
 
 setDefaultTimeout(120_000);
 
-const dir = useEngineDir("studio-engine-clip-batch-property-");
-const libraryDir = () => join(dir(), "library");
 const BUDGET = 10_000_000;
 const RISK_CONTROL = "task failed with status: FAIL, message: Failure to pass the risk control system";
 
@@ -49,19 +48,18 @@ async function settled(engine: ClipEngine): Promise<void> {
   }
 }
 
-/** What the seeds below actually exercised: a property over paths that never took one would pass for nothing. */
-const seen = new Set<string>();
-
-describe("a batch on every path (fixed seeds)", () => {
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-    test(`seed ${seed}: one reserve open at a time, the paid count balanced, no hold and no cap left`, async () => {
+/** One seed's walk: the invariants on its path (thrown if one breaks) and the paths it took. Memoised, so the coverage test below needs no sibling to have run first. */
+const walked = seedOutcomes<number, Set<string>>(
+  () => new Set(),
+  (seed, seen) =>
+    withEngineDir("studio-engine-clip-batch-property-", async (dir) => {
       const rand = seeded(seed * 7919);
       const size = 1 + Math.floor(rand() * 4);
       const draws = Array.from({ length: 12 }, () => rand());
       const cancelAfter = rand() < 0.35 ? Math.floor(rand() * 3) : -1;
-      const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(size));
+      const { avatarId, photoIds } = await seedBatchAvatar(join(dir, "library"), plainPhotos(size));
       const net = clipNetwork({ klingBy: (n) => scriptFor(draws[(n - 1) % draws.length] ?? 1) });
-      const engine = await startClipEngine(dir(), { net, monthlyBudgetMicros: BUDGET });
+      const engine = await startClipEngine(dir, { net, monthlyBudgetMicros: BUDGET });
 
       let postsAtCancel = 0;
       const { batchId } = batchOf(await createBatch(engine, { avatarId, photoIds }));
@@ -74,7 +72,7 @@ describe("a batch on every path (fixed seeds)", () => {
       await settled(engine);
       if (cancelAfter >= 0) expect(engine.net.posts("kling").length).toBeLessThanOrEqual(postsAtCancel + 1);
 
-      const lines = ledgerLines(dir());
+      const lines = ledgerLines(dir);
       for (const event of engine.events()) {
         if (event.type === "job.cancelled" && event.payload.kind === "clip" && event.payload.detail !== undefined) seen.add(event.payload.detail);
         if (event.type === "job.progress" && event.payload.kind === "clip" && event.payload.waitReason === "rate-limit") seen.add("429");
@@ -92,10 +90,22 @@ describe("a batch on every path (fixed seeds)", () => {
       if (moneyOpen) expect(next).toMatchObject({ ok: false, error: { code: "RECONCILE_REQUIRED" } });
       else if (!next.ok) expect(next.error.code).not.toBe("IN_FLIGHT");
       await settled(engine);
+    }),
+);
+
+const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+describe("a batch on every path (fixed seeds)", () => {
+  for (const seed of SEEDS) {
+    test(`seed ${seed}: one reserve open at a time, the paid count balanced, no hold and no cap left`, async () => {
+      await mustHold(walked(seed));
     });
   }
 
-  test("the seeds took the paths that matter: a free refusal into Grok, a 429, a cancel, an uncertain stop and a halted-ledger stop", () => {
+  // Reads the walks, not what the tests above left: it holds alone and in any order.
+  test("the seeds took the paths that matter: a free refusal into Grok, a 429, a cancel, an uncertain stop and a halted-ledger stop", async () => {
+    const seen = new Set<string>();
+    for (const seed of SEEDS) for (const path of (await walked(seed)).collected) seen.add(path);
     for (const path of ["grok", "429", "cancelled", "money-uncertain", "ledger-stopped"]) expect(seen.has(path)).toBe(true);
   });
 });
@@ -169,17 +179,16 @@ async function quiet(engine: ClipEngine): Promise<void> {
 const openChatReserves = (engine: ClipEngine): string[] =>
   (engine.engine.budget?.ledger.openReserves() ?? []).map((reserve) => String(reserve.attemptId)).filter((attemptId) => kindOf(attemptId) !== "clip");
 
-describe("part C calls beside single clips on every path (fixed seeds)", () => {
-  /** What the seeds exercised (shared by the seeds of this block only). */
-  const seenC = new Set<string>();
-
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-    test(`seed ${seed}: no chat reserve with a clip reserve, one suggest and one idea at most, the paid count at 0 and no reserve leaked`, async () => {
-      const rand = seeded(seed * 104729);
+/** One seed's walk of part C beside single clips: the invariants (thrown if one breaks) and the paths it took. Memoised, like the batch walk above. */
+const walkedC = seedOutcomes<number, Set<string>>(
+  () => new Set(),
+  (seed, seen) =>
+    withEngineDir("studio-engine-clip-batch-property-", async (dir) => {
+        const rand = seeded(seed * 104729);
       const chatDraws = Array.from({ length: 10 }, () => rand());
       const clipDraws = Array.from({ length: 6 }, () => rand());
       const net = motionNetwork({ chat: chatFor(chatDraws), clip: { klingBy: (n) => endingClipScript(clipDraws[(n - 1) % clipDraws.length] ?? 1) } });
-      const w = await motionWorld(dir(), { net, engine: { monthlyBudgetMicros: BUDGET } });
+      const w = await motionWorld(dir, { net, engine: { monthlyBudgetMicros: BUDGET } });
       const { avatarId, photoId } = w;
       const ops = Array.from({ length: 6 }, () => rand());
 
@@ -187,7 +196,7 @@ describe("part C calls beside single clips on every path (fixed seeds)", () => {
         const kind = draw < 0.34 ? "suggest" : draw < 0.67 ? "translate" : "clip";
         const answer =
           kind === "suggest" ? await w.suggest(1_000_000) : kind === "translate" ? await w.translate(IDEA, 1_000_000) : await create(w.started, { avatarId, photoId, acceptedWorstMicros: 850_000 });
-        if (!answer.ok) seenC.add(answer.error.clipReason ?? answer.error.code);
+        if (!answer.ok) seen.add(answer.error.clipReason ?? answer.error.code);
       };
       // Random groups of one to three, started together: the second meets the first.
       for (let i = 0; i < ops.length; ) {
@@ -200,7 +209,7 @@ describe("part C calls beside single clips on every path (fixed seeds)", () => {
         expect(openChatReserves(w.started)).toEqual([]);
       }
 
-      const lines = ledgerLines(dir());
+      const lines = ledgerLines(dir);
       const open = openByKind(lines);
       expect(open.together).toBe(false);
       expect(open.motion).toBeLessThanOrEqual(1);
@@ -215,12 +224,22 @@ describe("part C calls beside single clips on every path (fixed seeds)", () => {
       await quiet(w.started);
       expect(w.started.engine.paidCommandsOpen()).toBe(0);
       expect(openChatReserves(w.started)).toEqual([]);
-      if (lines.some((line) => kindOf(String(line.attemptId)) !== "clip" && line.type === "reserve")) seenC.add("chat");
-      if (lines.some((line) => kindOf(String(line.attemptId)) === "clip" && line.type === "reserve")) seenC.add("clip");
+      if (lines.some((line) => kindOf(String(line.attemptId)) !== "clip" && line.type === "reserve")) seen.add("chat");
+      if (lines.some((line) => kindOf(String(line.attemptId)) === "clip" && line.type === "reserve")) seen.add("clip");
+    }),
+);
+
+describe("part C calls beside single clips on every path (fixed seeds)", () => {
+  for (const seed of SEEDS) {
+    test(`seed ${seed}: no chat reserve with a clip reserve, one suggest and one idea at most, the paid count at 0 and no reserve leaked`, async () => {
+      await mustHold(walkedC(seed));
     });
   }
 
-  test("the seeds took the paths that matter: a chat call, a clip, and both ways of the guard", () => {
-    for (const path of ["chat", "clip", "motion-busy", "clip-busy"]) expect(seenC.has(path)).toBe(true);
+  // Reads the walks, not what the tests above left: it holds alone and in any order.
+  test("the seeds took the paths that matter: a chat call, a clip, and both ways of the guard", async () => {
+    const seen = new Set<string>();
+    for (const seed of SEEDS) for (const path of (await walkedC(seed)).collected) seen.add(path);
+    for (const path of ["chat", "clip", "motion-busy", "clip-busy"]) expect(seen.has(path)).toBe(true);
   });
 });
