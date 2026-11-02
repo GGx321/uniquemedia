@@ -354,7 +354,8 @@ describe("review ON: compose, wait for the owner, continue", () => {
     const { avatarId, started, launch, sceneSetId } = await composedAndWaiting();
     const revision = (await setOf(started, avatarId, sceneSetId))?.revision ?? 0;
     const stale = failed(await call(started, "autopilot.continueAfterReview", { launchId: launch.launchId, avatarId, sceneSetId, revision: revision + 1 }));
-    expect(stale.error.code).toBe("SCENES_CHANGED");
+    // The whole error, so a refusal for another reason shows its detail and sceneReason in the failure.
+    expect(stale.error).toMatchObject({ code: "SCENES_CHANGED" });
     const other = failed(await call(started, "autopilot.continueAfterReview", { launchId: launch.launchId, avatarId, sceneSetId: "set-someone-else-0001", revision }));
     expect(other.error).toMatchObject({ code: "VALIDATION", sceneReason: "not-awaiting" });
     ok(await call(started, "autopilot.continueAfterReview", { launchId: launch.launchId, avatarId, sceneSetId, revision }));
