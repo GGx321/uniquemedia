@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type Draft } from "../../shared/engine";
+import { afterColon } from "../lib/format";
 import { mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, withText } from "../testing";
@@ -249,6 +250,39 @@ test("cancel sends avatars.cancel for the running job", async () => {
  * The two tests below pin this at both ends: the command's own round trip,
  * and the separate, later real end.
  */
+
+test("a moderation refusal is free: its tiles and the line say so, not «стоимость попытки учтена»", async () => {
+  const { engine, scheduler } = setup();
+  engine.failNextSlots(2, { code: "MODERATION_REFUSED" });
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+
+  expect(screen.getAllByText("Не получилось")).toHaveLength(2);
+  expect(screen.getAllByText("бесплатно")).toHaveLength(2);
+  expect(screen.queryByText(/Стоимость попытки учтена/) === null).toBe(true);
+  expect(screen.getByText(/Эти попытки ничего не стоили/)).toBeDefined();
+});
+
+test("failed slots are explained in Russian and their cost is called out, alongside whatever did succeed", async () => {
+  const { engine, scheduler } = setup();
+  engine.failNextSlots(2, { code: "NETWORK" });
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+
+  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
+  // Lowercase after the colon, as Russian typography wants: "…получить: OpenRouter…".
+  expect(screen.getByText(new RegExp(`варианта не удалось получить: ${afterColon(ERROR_MESSAGES_RU.NETWORK)}`))).toBeDefined();
+  // The two empty slots say so themselves, next to the two portraits that did come.
+  expect(screen.getAllByText("Не получилось")).toHaveLength(2);
+  expect(screen.getAllByText("стоимость попытки учтена")).toHaveLength(2);
+  expect(screen.getByText(/Стоимость попытки учтена/)).toBeDefined();
+});
 
 test("a pending reconcile blocks generation before anything is sent", async () => {
   const { engine } = setup();

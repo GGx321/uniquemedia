@@ -281,7 +281,23 @@ describe("closing the window or quitting never drops an edit (the review's HIGH 
     expect(callsOf(engine, "montages.save").length).toBe(before + 1);
     expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined();
   });
+  test("a save refused on the way out of a quit answers «not saved» (the quit is cancelled) and offers «Выйти без сохранения»", async () => {
+    const main = bridge();
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
 
+    const answers = await asAnotherWindow(() => Promise.all(main.asks.map((ask) => ask())));
+    expect(answers).toEqual([false]);
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+
+    fireEvent.click(screen.getByRole("button", { name: "Выйти без сохранения" }));
+    expect(main.quits()).toBe(1);
+    // The owner chose: the close that follows is not held again.
+    expect(closeWindow().defaultPrevented).toBe(false);
+  });
 });
 
 describe("undo, redo and the saves of another window", () => {
@@ -373,6 +389,19 @@ describe("«Рендер»", () => {
     expect(made.montageId).toMatch(/^montage-/);
   });
 
+  test("a save made elsewhere while this window heard nothing is picked up when the window comes back", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.setDelivery(false);
+    await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: "из другого окна" }));
+    expect(within(header()).getByText(/8\.0 с · ≈ 3\.5 МБ/)).toBeDefined();
+
+    engine.setDelivery(true);
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByRole("heading", { level: 1, name: "Mia · «из другого окна»" });
+    expect(within(header()).getByText(/5\.0 с · ≈ 2\.2 МБ/)).toBeDefined();
+  });
 });
 
 describe("the engine away after the draft opened (slice review 5-M1)", () => {
@@ -398,6 +427,60 @@ describe("the engine away after the draft opened (slice review 5-M1)", () => {
     expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
   });
 
+});
+
+describe("notices in the editor float over the preview (slice review 5-L1)", () => {
+  const dockCards = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice")];
+  const shownCards = (): string[] => dockCards().filter((card) => !card.hidden).map((card) => card.querySelector(".notice-title")?.textContent ?? card.querySelector(".notice-text")?.textContent ?? "");
+
+  test("review r1 MEDIUM-2: two notices stack as one, the newest, and «Ещё 1 уведомление» unfolds the rest", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(dockCards()).toHaveLength(2);
+    expect(shownCards()).toEqual([ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE]);
+    const more = screen.getByRole("button", { name: "Ещё 1 уведомление" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    await flush();
+    expect(shownCards()).toHaveLength(2);
+    const fold = screen.getByRole("button", { name: "Свернуть список уведомлений" });
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fold);
+    await flush();
+    expect(shownCards()).toHaveLength(1);
+  });
+
+  /** A rename that the engine refuses with `code` (a save failure card). */
+  async function failRename(engine: Awaited<ReturnType<typeof studio>>["engine"], code: "LIBRARY_UNAVAILABLE" | "INTERNAL", name: string): Promise<void> {
+    engine.failNext("montages.save", { code });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: name } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByText(ERROR_MESSAGES_RU[code]);
+  }
+  const chips = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice-chip")];
+
+  test("review r2 MEDIUM: a folded card whose condition ended is a card again when the same condition comes back", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "вечер");
+    fireEvent.click(within(dockCards()[0] ?? document.body).getByRole("button", { name: "Свернуть уведомление" }));
+    await flush();
+    expect([dockCards().length, chips().length]).toEqual([0, 1]);
+    // The save goes through: the condition ends, and its chip with it.
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(chips()).toHaveLength(0));
+    // The same failure again is news: a card, not a chip.
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "ночь");
+    expect([dockCards().length, chips().length]).toEqual([1, 0]);
+  });
 });
 
 describe("a draft that cannot be opened", () => {

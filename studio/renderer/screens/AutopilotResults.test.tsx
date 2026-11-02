@@ -245,6 +245,17 @@ describe("«Удалить видео»", () => {
     expect(within(results()).getByRole("status").textContent).toBe(`Видео 2 · Mia удалено, 3${NBSP}фото снова свободны.Закрыть`);
   });
 
+  test("while the marks cannot be read the dialog cannot know a video is published: it starts on the plain delete and says why (Q4, fix round 1)", async () => {
+    await openLatest((mock) => mock.tearPublishedLog(MIA.avatarId));
+    fireEvent.click(within(tile("видео 1 · Mia")).getByRole("button", { name: "Удалить видео 1 · Mia" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео 1 · Mia?" });
+    expect(checked(within(dialog).getByRole("radio", { name: /^Только удалить видео/ }))).toBe("true");
+    expect(dialog.querySelector(".ap-del-lead")?.textContent).toBe(
+      "Файл в «Готовых видео» тоже удалится. Отметка «Опубликовано» не читается: если видео уже опубликовано, выберите «Удалить видео и отклонить фото».",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  });
+
   test("a delete that fails (the folder does not answer, or a timeout that reads the same): nothing is promised, the records and the photos are read again", async () => {
     const { engine } = await openLatest();
     engine.failNext("videos.delete", { code: "EXPORT_UNAVAILABLE", exportReason: "missing" });

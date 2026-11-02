@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { type ApiKeyStatus, AGE_CHECK_FALLBACK_PRICE, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { callsOf, flush, openSection, setup, inAct } from "../testing";
 
@@ -37,6 +37,13 @@ function inputValues(): string[] {
 }
 
 // ---------- key ----------
+
+test("key state: not set", async () => {
+  await openSettings(NOT_SET);
+  expect(screen.getByText(/^не задан/)).toBeDefined();
+  expect(keyInput().getAttribute("type")).toBe("password");
+  expect(screen.queryByDisplayValue(/••••/) === null).toBe(true);
+});
 
 test("key state: stored shows only the last four characters", async () => {
   await openSettings(STORED);
@@ -250,4 +257,35 @@ describe("image age check toggle", () => {
 
 });
 
+function changeLibraryTo(path: string): void {
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  const input = screen.getByLabelText("Библиотека");
+  fireEvent.change(input, { target: { value: path } });
+  const form = input.closest("form");
+  if (!form) throw new Error("library form missing");
+  fireEvent.submit(form);
+}
 
+test("picking the library folder again (it was missing at start) refetches the snapshot, so the lists show what it holds", async () => {
+  const { engine } = await openSettings();
+  const snapshotsBefore = callsOf(engine, "engine.snapshot").length;
+  // The engine can read the folder now and finds an avatar in it; no event says so.
+  engine.addAvatarSilently({
+    avatarId: "avatar-found-0001",
+    name: "Zoe",
+    descriptor: { age: 25, text: "25-year-old woman with chestnut hair." },
+    masterPhotoId: "photo-found-0001",
+    createdAt: "2026-09-24T09:00:00.000Z",
+    status: "active",
+    photoCount: 1,
+    videoCount: 0,
+    eligibleUnusedCount: 0,
+    usage: { state: "ok" },
+  });
+
+  changeLibraryTo("/Users/studio/Studio/library");
+
+  await waitFor(() => expect(callsOf(engine, "engine.snapshot").length).toBe(snapshotsBefore + 1));
+  await openSection("Аватары");
+  expect(await screen.findByText("Zoe")).toBeDefined();
+});

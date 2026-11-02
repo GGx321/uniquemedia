@@ -5,7 +5,7 @@ import type { EngineClient } from "../engine/client";
 import { freePhotos, MIA, NORA, SOFIA } from "../engine/mockEngine.testkit";
 import { MockEngine } from "../engine/mockEngine";
 import { formatUsdTiered } from "../lib/money";
-import { callsOf, describeElement, flush, openSection, setup, tick, type SetupOptions } from "../testing";
+import { callsOf, describeElement, flush, openSection, setup, tick, withText, type SetupOptions } from "../testing";
 import { MIX_KEY } from "./autopilot/launchForm";
 import { GO_WHY } from "./autopilot/planModel";
 import { FIXTURE } from "./photos/sceneScreenKit";
@@ -323,6 +323,28 @@ describe("«Стоп»", () => {
     await screen.findByRole("heading", { level: 2, name: "Идёт запуск" });
     return utils;
   }
+
+  test("asks first: the dialog takes the focus on «Отмена»; Escape and «Отмена» close it and put the focus back on «Стоп»", async () => {
+    const { engine } = await running();
+    fireEvent.click(screen.getByRole("button", { name: "Стоп" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
+    expect(within(dialog).getByText(/^Новых запросов и рендеров не будет/)).toBeDefined();
+    expect(within(dialog).getByText("Останется")).toBeDefined();
+    // S4.9d (S4.9b L4): the sums drawn mono, as ApStopConfirm draws them.
+    const spent = within(dialog).getByText(withText(/^Потрачено \$[\d.]+ из \$[\d.]+ — остальное запуск уже не потратит\.$/));
+    expect(Array.from(spent.querySelectorAll(".mono"), (el) => el.textContent ?? "").every((t) => /^\$[\d.]+$/.test(t))).toBe(true);
+    expect(spent.querySelectorAll(".mono").length).toBe(2);
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("alertdialog") === null).toBe(true));
+    expect(describeElement(document.activeElement)).toBe(describeElement(screen.getByRole("button", { name: "Стоп" })));
+    fireEvent.click(screen.getByRole("button", { name: "Стоп" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Отмена" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog") === null).toBe(true));
+    expect(describeElement(document.activeElement)).toBe(describeElement(screen.getByRole("button", { name: "Стоп" })));
+    expect(callsOf(engine, "autopilot.stop")).toHaveLength(0);
+    expect(screen.getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
+  });
 
   test("«Остановить» stops the launch: «Останавливаем…» until the engine says stopped, the focus on the heading, then the form opens again", async () => {
     const { engine, scheduler } = await running();
