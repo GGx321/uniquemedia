@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { MockClipScript } from "./mockClips";
+import { mustHold, seedOutcomes } from "../../testing/seedOutcomes";
 import { cancelBatch, endOf, makeBatchMock, mostOpenReserves, stepUntil, startBatch, detailOf } from "./mockEngine.clipBatch.testkit";
 
 // Stage 5, 5b.2, S5.WB3 (plan s5b2 §5.6, M11; the mirror of engine.clipBatch.property.test.ts): a batch walked through random but FIXED scripts on the mock's manual clock: clean clips, free refusals into
@@ -26,49 +27,58 @@ function scriptFor(draw: number): MockClipScript {
   return { first: "refused-free", then: "refused-free" };
 }
 
-const seen = new Set<string>();
+/** One seed's walk: the invariants on its path (thrown if one breaks) and the paths it took. Memoised, so the coverage test below needs no sibling to have run first. */
+const walked = seedOutcomes<number, Set<string>>(
+  () => new Set(),
+  async (seed, seen) => {
+    const rand = seeded(seed * 7919);
+    const size = 1 + Math.floor(rand() * 5);
+    const scripts = Array.from({ length: 10 }, () => scriptFor(rand()));
+    const cancelAfter = rand() < 0.35 ? Math.floor(rand() * 3) : -1;
+    const m = makeBatchMock(size);
+    m.engine.scriptNextBatch(scripts);
+    const { batchId, jobIds } = await startBatch(m, m.photoIds);
+
+    let postsAtCancel = 0;
+    if (cancelAfter >= 0) {
+      for (let i = 0; i < 6_000 && m.engine.peekClips().posts.length <= cancelAfter; i++) if (!m.scheduler.next()) break;
+      await cancelBatch(m, batchId);
+      postsAtCancel = m.engine.peekClips().posts.length;
+    }
+    stepUntil(m, () => m.engine.peekClips().unit === null, "the unit given back");
+    m.scheduler.runAll();
+    if (cancelAfter >= 0) expect(m.engine.peekClips().posts.length).toBeLessThanOrEqual(postsAtCancel + 1);
+
+    for (const event of m.events) {
+      if (event.type === "job.cancelled" && event.payload.kind === "clip" && event.payload.detail !== undefined) seen.add(event.payload.detail);
+      if (event.type === "job.progress" && event.payload.kind === "clip" && event.payload.waitReason === "rate-limit") seen.add("429");
+    }
+    if (m.engine.peekClips().posts.includes("grok")) seen.add("grok");
+    expect(mostOpenReserves(m.events)).toBeLessThanOrEqual(1);
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    expect(m.engine.peekClips().unit).toBeNull();
+    // Every member of the batch ended, and a cancelled one says why.
+    const running = m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" ? [e.payload.jobId] : [])).filter((id, i, all) => all.indexOf(id) === i);
+    for (const id of running) {
+      const end = endOf(m.events, id);
+      expect(end).toBeDefined();
+      if (end?.type === "job.cancelled") expect(detailOf(end)).toBeDefined();
+    }
+    expect(jobIds.length).toBe(size);
+  },
+);
 
 describe("a batch on every path in the mock (fixed seeds)", () => {
   for (const seed of SEEDS) {
     test(`seed ${seed}: one reserve open at a time, the unit back, no hold left, every member ended`, async () => {
-      const rand = seeded(seed * 7919);
-      const size = 1 + Math.floor(rand() * 5);
-      const scripts = Array.from({ length: 10 }, () => scriptFor(rand()));
-      const cancelAfter = rand() < 0.35 ? Math.floor(rand() * 3) : -1;
-      const m = makeBatchMock(size);
-      m.engine.scriptNextBatch(scripts);
-      const { batchId, jobIds } = await startBatch(m, m.photoIds);
-
-      let postsAtCancel = 0;
-      if (cancelAfter >= 0) {
-        for (let i = 0; i < 6_000 && m.engine.peekClips().posts.length <= cancelAfter; i++) if (!m.scheduler.next()) break;
-        await cancelBatch(m, batchId);
-        postsAtCancel = m.engine.peekClips().posts.length;
-      }
-      stepUntil(m, () => m.engine.peekClips().unit === null, "the unit given back");
-      m.scheduler.runAll();
-      if (cancelAfter >= 0) expect(m.engine.peekClips().posts.length).toBeLessThanOrEqual(postsAtCancel + 1);
-
-      for (const event of m.events) {
-        if (event.type === "job.cancelled" && event.payload.kind === "clip" && event.payload.detail !== undefined) seen.add(event.payload.detail);
-        if (event.type === "job.progress" && event.payload.kind === "clip" && event.payload.waitReason === "rate-limit") seen.add("429");
-      }
-      if (m.engine.peekClips().posts.includes("grok")) seen.add("grok");
-      expect(mostOpenReserves(m.events)).toBeLessThanOrEqual(1);
-      expect([...m.engine.peekClips().monthHolds]).toEqual([]);
-      expect(m.engine.peekClips().unit).toBeNull();
-      // Every member of the batch ended, and a cancelled one says why.
-      const running = m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" ? [e.payload.jobId] : [])).filter((id, i, all) => all.indexOf(id) === i);
-      for (const id of running) {
-        const end = endOf(m.events, id);
-        expect(end).toBeDefined();
-        if (end?.type === "job.cancelled") expect(detailOf(end)).toBeDefined();
-      }
-      expect(jobIds.length).toBe(size);
+      await mustHold(walked(seed));
     });
   }
 
-  test("the seeds took the paths that matter: a free refusal into Grok, a 429, a cancel, an uncertain stop and a halted-ledger stop", () => {
+  // Reads the walks, not what the tests above left: it holds alone and in any order.
+  test("the seeds took the paths that matter: a free refusal into Grok, a 429, a cancel, an uncertain stop and a halted-ledger stop", async () => {
+    const seen = new Set<string>();
+    for (const seed of SEEDS) for (const path of (await walked(seed)).collected) seen.add(path);
     for (const path of ["grok", "429", "cancelled", "money-uncertain", "ledger-stopped"]) expect(seen.has(path)).toBe(true);
   });
 });
