@@ -16,6 +16,7 @@ import { runReviewWrite } from "./reviewWriteJob";
 import { reviewWriteEstimate } from "./estimate";
 import { planReviewWrite } from "./reviewPlan";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
+import { COVER } from "../../shared/scenes/banks/companions/outfits";
 import { OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -234,13 +235,15 @@ describe("an idea write is asked in its set's mode (S5.BA9)", () => {
     expect(scenes.find((s) => s.sceneId === 6)?.text).toBe(`${LINGERIE} ${OWN_BOLD_COVERAGE}`);
   });
 
-  test("an avatar made in Studio's own scene in a towel alone is kept at the first answer", async () => {
+  test("an avatar made in Studio's own scene in a towel alone is kept at the first answer, and ends with the towel's sentence (S5.BA9 r2, review M2)", async () => {
     await seed("bold");
     await store.update(AVATAR, SET, twoScenes);
     const { net, end } = await run([towelFor5], true);
     expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
     expect(net.calls.length).toBe(1);
-    expect((await setNow()).scenes.find((s) => s.sceneId === 5)?.text?.startsWith(TOWEL)).toBe(true);
+    const scenes = (await setNow()).scenes;
+    expect(scenes.find((s) => s.sceneId === 5)?.text).toBe(`${TOWEL} ${COVER.towelOpen}`);
+    expect(scenes.find((s) => s.sceneId === 6)?.text).toBe(LINGERIE);
   });
 
   test("a rewrite of an own scene of a «Смелая» set: the bold variant at the bold call too", async () => {
