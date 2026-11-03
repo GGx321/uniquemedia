@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { SceneWriteTarget } from "../../shared/engine";
+import { COVER } from "../../shared/scenes/banks/companions/outfits";
 import { OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
 import { writerCallOf } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
@@ -177,9 +178,29 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
   });
 
-  test.each(COVER_ONLY)("an avatar made in Studio may be covered by %s alone: the sentence is kept", (_cover, sentence) => {
+  // S5.BA9 r2 (review M2, I5.74, banks/schema.ts open-coverage: «an implied cover says what covers her to every avatar»): an avatar made in Studio may be covered by one alone, and the
+  // sentence then ends with the bank's sentence of that cover, as the bank's own towel, sheet and foam moments end: the towel's open one, the sheet's and the foam's kept ones.
+  const STUDIO_COVER = [
+    [COVER_ONLY[0][0], COVER_ONLY[0][1], COVER.towelOpen],
+    [COVER_ONLY[1][0], COVER_ONLY[1][1], COVER.sheet],
+    [COVER_ONLY[2][0], COVER_ONLY[2][1], COVER.foam],
+  ] as const;
+
+  test.each(STUDIO_COVER)("an avatar made in Studio may be covered by %s alone: the sentence is kept and ends with that cover's sentence", (_cover, sentence, coverage) => {
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
-    expect(read.ok && read.sentences.get(5)?.startsWith(sentence)).toBe(true);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${coverage}`);
+  });
+
+  test("an avatar made in Studio's sentence that names two covers ends with the sentence of the one it names first", () => {
+    const sentence = "She lies in her bed under the white sheet, a towel wrapped around her hair, smiling at the viewer.";
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${COVER.sheet}`);
+  });
+
+  test("an avatar made in Studio's sentence that names lingerie beside a towel is a lingerie frame: nothing is appended", () => {
+    const sentence = "She stands in her bathroom in a white lace bra and panties, a towel over her shoulder, smiling at the viewer.";
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)).toBe(sentence);
   });
 
   test("a youth word still refuses the whole answer, as at every level (the age guard is unchanged)", () => {

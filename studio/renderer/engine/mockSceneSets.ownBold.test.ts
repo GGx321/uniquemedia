@@ -3,6 +3,7 @@ import { PriceBook } from "../../engine/money/prices";
 import { reviewWriteEstimate } from "../../engine/sceneSets/estimate";
 import type { AvatarSummary, SceneSetView, SceneView } from "../../shared/engine";
 import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLine";
+import { COVER } from "../../shared/scenes/banks/companions/outfits";
 import { namesImpliedCover, OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { MIA, makeMock, unwrap, type Mock } from "./mockEngine.testkit";
@@ -153,5 +154,10 @@ describe("an idea that asks for a towel at «Смелая» on the mock (S5.BA9 
     const own = ownOf(await withOwn(mockOf(), STUDIO.avatarId, "bold", TOWEL_IDEA));
     expect(own.text).not.toContain(MOCK_OWN_BOLD_OUTFIT);
     expect(namesImpliedCover(own.text ?? "")).toBe(true);
+  });
+
+  test("an avatar made in Studio's towel frame ends with the towel's sentence, as the engine's reader appends it (S5.BA9 r2, review M2)", async () => {
+    const own = ownOf(await withOwn(mockOf(), STUDIO.avatarId, "bold", TOWEL_IDEA));
+    expect(own.text?.endsWith(` ${COVER.towelOpen}`)).toBe(true);
   });
 });

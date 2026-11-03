@@ -546,7 +546,7 @@ function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string 
     // (`implied-cover`), so an imported avatar's is drawn in the «Смелая» outfit.
     const asIdea = `She enjoys ${scene.idea ?? "a quiet moment"} in her bedroom, ${detail}.`;
     const sentence = impliedNudity && namesImpliedCover(asIdea) ? asIdea : `She enjoys ${scene.idea ?? "a quiet moment"} in ${MOCK_OWN_BOLD_OUTFIT} in her bedroom, ${detail}.`;
-    const coverage = ownCoverageOf(impliedNudity);
+    const coverage = ownCoverageOf(impliedNudity, sentence);
     return coverage === undefined ? sentence : `${sentence} ${coverage}`;
   }
   if (scene.route === "seedream" && scene.category !== "own" && isCustomCategory(scene.category)) {

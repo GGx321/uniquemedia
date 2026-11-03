@@ -229,12 +229,18 @@ function settle(slot: IdeaSlot, scene: { shot?: unknown; pose?: unknown }, mirro
 
 /**
  * 5a.4 (S5.BA9, I5.74): every sentence a bold read accepts (an answer's, or a refusal's kept ones) with the coverage of the avatar's origin appended (`ownCoverageOf`: the kept one for an
- * imported avatar or one of unknown origin, none for one made in Studio), once: a sentence is read, and so covered, in one attempt only. An ordinary read is handed back as it is.
+ * imported avatar or one of unknown origin; for one made in Studio, r2, the sentence of the towel, the sheet or the foam that alone covers her, else none), once: a sentence is read, and
+ * so covered, in one attempt only. An ordinary read is handed back as it is.
  */
 function covered(read: ReturnType<typeof readWriterScenes>, bold: IdeaBold | undefined): ReturnType<typeof readWriterScenes> {
-  const coverage = bold === undefined ? undefined : ownCoverageOf(bold.impliedNudity);
-  if (coverage === undefined) return read;
-  const cover = (sentences: ReadonlyMap<number, string>): Map<number, string> => new Map([...sentences].map(([slotIndex, sentence]) => [slotIndex, `${withFullStop(sentence)} ${coverage}`]));
+  if (bold === undefined) return read;
+  const cover = (sentences: ReadonlyMap<number, string>): Map<number, string> =>
+    new Map(
+      [...sentences].map(([slotIndex, sentence]) => {
+        const coverage = ownCoverageOf(bold.impliedNudity, sentence);
+        return [slotIndex, coverage === undefined ? sentence : `${withFullStop(sentence)} ${coverage}`];
+      }),
+    );
   if (read.ok) return { ok: true, sentences: cover(read.sentences) };
   return read.repair === undefined ? read : { ...read, repair: { ...read.repair, accepted: cover(read.repair.accepted) } };
 }
