@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createPaidSteps } from "./autopilot/paidSteps";
@@ -355,10 +355,10 @@ interface Cell {
 
 /**
  * The cells a push runs (the rest of the matrix runs in the heavy run, every cell as it was): a kill before the paid draw (row 4), with a draw request in flight (row 5b: its reserve is open, the view
- * demands a reconcile and no paid photo is drawn twice, the one cell that checks this on a real engine), in the middle of a render (row 9, nothing of it on disk), and after the photos are settled
- * (row 6).
+ * demands a reconcile and no paid photo is drawn twice, the one cell that checks this on a real engine), a slice entry whose run folder was never made (row 5a: the only engine-level check that
+ * such an entry is recovered and its cap lowered to today's cost), in the middle of a render (row 9, nothing of it on disk), and after the photos are settled (row 6).
  */
-const PUSH_CELLS: ReadonlySet<string> = new Set(["4 OFF", "5b OFF", "6 OFF", "9a OFF"]);
+const PUSH_CELLS: ReadonlySet<string> = new Set(["4 OFF", "5a OFF", "5b OFF", "6 OFF", "9a OFF"]);
 const cellKey = (cell: Cell): string => `${cell.boundary.id} ${cell.review ? "ON" : "OFF"}`;
 
 async function runCell({ boundary, review }: Cell): Promise<void> {
@@ -398,6 +398,9 @@ async function runCell({ boundary, review }: Cell): Promise<void> {
 
 describe("the crash matrix: a kill at each step boundary of plan §3.6, then «Продолжить»", () => {
   const cells: Cell[] = BOUNDARIES.flatMap((b) => [true, false].map((review) => ({ label: `${b.name} · review ${review ? "ON" : "OFF"}`, boundary: b, review })));
+  // A renamed boundary must not drop its push cell into the heavy run unseen.
+  const unknown = [...PUSH_CELLS].filter((key) => !cells.some((cell) => cellKey(cell) === key));
+  if (unknown.length > 0) throw new Error(`PUSH_CELLS names no cell of the matrix: ${unknown.join(", ")}`);
   for (const cell of cells) {
     // A push cell also runs in the heavy run, so the heavy run walks the whole matrix.
     if (PUSH_CELLS.has(cellKey(cell))) sweepTest(cell.label, { push: cell, heavy: cell }, runCell, 300_000);

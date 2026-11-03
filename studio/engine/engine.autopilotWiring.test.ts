@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout } from "bun:test";
 import { ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
 import { draftOf, generatingDraftOf, LAUNCH_MS, network, wiringKit } from "./testing/wiringKit";
 import { heavyTest, sweepTest } from "../testing/bunTiers";
