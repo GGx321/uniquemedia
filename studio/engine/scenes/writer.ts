@@ -717,11 +717,14 @@ function labelWordsIn(sentence: string): string[] {
   return Array.from(sentence.matchAll(LABEL_WORDS), (m) => m[0]);
 }
 
-/** The public places of a world: where she must never be in her underwear. */
+/**
+ * The public places of a world: where she must never be in her underwear. S5.BAR (review L5): a hotel's or a resort's public rooms too, the spa, the sauna, the corridor and the hotel
+ * terrace; «terrace» alone is none (the owner allowed the villa terrace).
+ */
 const PUBLIC_NOUNS =
-  "caf(?:e|é)s?|coffee\\s+shops?|restaurants?|bistros?|brasseries?|bars?|pubs?|(?:night)?clubs?|streets?|sidewalks?|shops?|stores?|boutiques?|markets?|malls?|offices?|gyms?|parks?|plazas?|squares?|stations?|airports?|museums?|galler(?:y|ies)|lobb(?:y|ies)|librar(?:y|ies)|bakery|bakeries";
-/** The shore's public places, public anywhere but a water slot's own water place (below). */
-const SHORE_NOUNS = "beach(?:es)?|marinas?|harbou?rs?|piers?|promenades?|boardwalks?";
+  "caf(?:e|é)s?|coffee\\s+shops?|restaurants?|bistros?|brasseries?|bars?|pubs?|(?:night)?clubs?|streets?|sidewalks?|shops?|stores?|boutiques?|markets?|malls?|offices?|gyms?|parks?|plazas?|squares?|stations?|airports?|museums?|galler(?:y|ies)|lobb(?:y|ies)|librar(?:y|ies)|bakery|bakeries|spas?|saunas?|corridors?|hotel\\s+terraces?";
+/** The shore's public places, and the poolside (S5.BAR, review L5), public anywhere but a water slot's own water place (below). */
+const SHORE_NOUNS = "beach(?:es)?|marinas?|harbou?rs?|piers?|promenades?|boardwalks?|poolsides?";
 /**
  * Review round 3, LOW: what a water slot (the water branch, in swimwear) is at, its world's own water place: the beach and the marina here (the pool, the lido, the
  * sea and the lake are no public noun at all; the beach club is read apart, `waterVenue`). The harbour, the pier, the promenade and the boardwalk stay public:

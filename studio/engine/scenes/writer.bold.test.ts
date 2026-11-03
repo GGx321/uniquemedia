@@ -657,6 +657,28 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(problemsOf(bold(sentence, slot))).toContain("public-place");
     });
 
+    // S5.BAR (review L5): a hotel's or a resort's public rooms, where she must not be in lingerie: the spa, the sauna, the poolside, the corridor and the hotel terrace.
+    test.each([
+      ["her window", "a hotel spa in Vienna", "leans against the frame", "By the window of the hotel spa in Vienna, she leans against the frame in a white lace bra and panties, steam rising behind her."],
+      ["her room", "a sauna in Helsinki", "lies back across the bed", "At the sauna in Helsinki, she lies back across the bed in a white lace bra and panties."],
+      ["her room", "a hotel pool in Nice", "lies back across the bed", "On a poolside lounger in Nice, she lies back across the bed in a white lace bra and panties."],
+      ["her sofa", "a hotel in Rome", "curls up with her knees in", "In the hotel corridor, she curls up with her knees in in a white lace bra and panties."],
+      ["her balcony", "a hotel pool in Nice", "leans on the railing in the sun", "On the hotel terrace by the pool in Nice, she leans on the railing in the sun in a white lace bra and panties, loungers lined up below."],
+    ])("%s in «%s»: the spa, the sauna, the poolside, the corridor or the hotel terrace is refused: %s / %s", (location, world, activity, sentence) => {
+      const slot = routed({ location, world, activity, shot: "friend", capture: "timer", pose: "front" });
+      expect(problemsOf(bold(sentence, slot))).toContain("public-place");
+    });
+
+    // S5.BAR (review L5): the owner allowed the villa terrace, so «terrace» alone is no public place; nor is a word the new nouns only begin («a spacious room»).
+    test.each([
+      ["her balcony", "a villa in Tuscany", "leans on the railing in the sun", "On the terrace of her villa in Tuscany, she leans on the railing in the sun in a white lace bra and panties."],
+      ["her balcony", "a villa in Tuscany", "leans on the railing in the sun", "On her villa terrace, she leans on the railing in the sun in a white lace bra and panties."],
+      ["her room", "a hotel in Rome", "lies back across the bed", "In her spacious room in Rome, she lies back across the bed in a white lace bra and panties."],
+    ])("%s in «%s»: no public place: %s / %s", (location, world, activity, sentence) => {
+      const slot = routed({ location, world, activity, shot: "friend", capture: "timer", pose: "front" });
+      expect(problemsOf(bold(sentence, slot))).not.toContain("public-place");
+    });
+
     test.each(["on the street", "in a corner bistro", "at her office", "on the beach", "at the bakery counter"])("«%s», no place of her world, is refused away from the water", (where) => {
       expect(problemsOf(bold(`In her hotel room, she lies back across the bed in a white lace bra and panties, then ${where} a box of macarons sits beside her.`))).toContain("public-place");
     });
@@ -726,6 +748,8 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       ["a marina at sunset", "At the marina, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
       ["a lido on the lake", "At the lido, she lies back, soaking up the heat on a lounger by the water of the lake in a white string bikini."],
       ["a yacht at anchor in a bay", "On the yacht, she lies back, soaking up the heat on a lounger by the water with the sea all around her in a white string bikini."],
+      // S5.BAR (review L5): the poolside is public away from the water only.
+      ["poolside", "On the poolside, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
     ])("a water slot (%s) is at its own water place", (world, sentence) => {
       expect(problemsOf(bold(sentence, lounger(world)))).not.toContain("public-place");
     });
