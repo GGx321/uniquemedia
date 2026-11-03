@@ -144,9 +144,15 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(read.ok && read.sentences.get(5)?.endsWith(OWN_BOLD_COVERAGE)).toBe(false);
   });
 
-  test.each(["topless", "naked", "nude", "see-through bra"])("an exposure word («%s») is refused for its scene alone, and the other scene is kept with its coverage", (word) => {
+  // S5.BAR (review M1): a frame that names no garment is also `implied-cover` for an imported avatar; «see-through bra» names one.
+  test.each([
+    ["topless", ["exposure-word", "implied-cover"]],
+    ["naked", ["exposure-word", "implied-cover"]],
+    ["nude", ["exposure-word", "implied-cover"]],
+    ["see-through bra", ["exposure-word"]],
+  ] as const)("an exposure word («%s») is refused for its scene alone, and the other scene is kept with its coverage", (word, problems) => {
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: `She lies across her bed ${word}, one hand on the pillow.`, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
-    expect(read).toMatchObject({ ok: false, problems: ["exposure-word"], boldSlots: { "exposure-word": [5] } });
+    expect(read).toMatchObject({ ok: false, problems: [...problems], boldSlots: { "exposure-word": [5] } });
     if (read.ok) throw new Error("expected a refusal");
     expect(read.repair?.marked).toEqual([5]);
     expect(read.repair?.accepted).toEqual(new Map([[6, `${GOOD_SECOND.sentence} ${OWN_BOLD_COVERAGE}`]]));
@@ -173,6 +179,35 @@ describe("the bold variant's reader (S5.BA9)", () => {
     if (read.ok) throw new Error("expected a refusal");
     expect(read.repair?.marked).toEqual([5]);
     expect(read.repair?.accepted).toEqual(new Map([[6, `${GOOD_SECOND.sentence} ${OWN_BOLD_COVERAGE}`]]));
+  });
+
+  // S5.BAR (review M1): for an imported avatar the test is inverted: a frame she wears no garment in is refused, whatever cover it names and however (in nothing but a towel, a towel
+  // around her, a bath full of foam, covered in bubbles, under the duvet), and with no cover at all. The «she is in it» forms only choose a Studio avatar's cover sentence.
+  const NO_GARMENT_WITH_A_COVER = [
+    ["in nothing but a towel", "She steps out of the shower in nothing but a towel, smiling at the viewer."],
+    ["a white towel around her", "She sits on her bed, a white towel around her, smiling at the viewer."],
+    ["wrapped in a soft, fluffy white towel", "She stands in her bathroom wrapped in a soft, fluffy white towel, smiling at the viewer."],
+    ["a towel draped over her hips", "She lies on her stomach, a towel draped over her hips, her back bare."],
+    ["a bath full of foam", "She lies back in a bath full of foam, smiling at the viewer."],
+    ["covered in bubbles", "She lies back in the tub, covered in bubbles, smiling at the viewer."],
+    ["suds covering her body", "She relaxes in the bath, suds covering her body, smiling."],
+    ["under the duvet", "She lies in bed under the duvet, smiling at the viewer."],
+    ["under a white blanket", "She lies under a white blanket on her bed, looking at the viewer."],
+    ["the covers pulled up to her chest", "She lies in bed, the covers pulled up to her chest, smiling."],
+  ] as const;
+
+  test.each(NO_GARMENT_WITH_A_COVER)("an imported avatar's sentence with no garment and %s is refused for its scene (implied-cover)", (_cover, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
+    expect(read).toMatchObject({ ok: false, boldSlots: { "implied-cover": [5] } });
+  });
+
+  test.each([
+    ["her arms across her chest", "She sits on the bed, covering her chest with her arms, smiling."],
+    ["her back bare", "She lies on her bed, her back bare, smiling over her shoulder."],
+    ["nothing on but a smile", "She lies on her stomach on the bed, nothing on but a smile."],
+  ])("an imported avatar's sentence with no garment and no cover (%s) is refused for its scene (implied-cover)", (_frame, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
+    expect(read).toMatchObject({ ok: false, boldSlots: { "implied-cover": [5] } });
   });
 
   test.each([
@@ -223,10 +258,11 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(studio.ok && studio.sentences.get(5)).toBe(sentence);
   });
 
-  test("a sheet mask is no sheet she is under: kept for an imported avatar, and no cover sentence for one made in Studio", () => {
+  // S5.BAR (review M1): she wears no garment in her bath, so an imported avatar's frame is refused even though the sheet mask is no cover.
+  test("a sheet mask is no sheet she is under: refused for an imported avatar (no garment), and no cover sentence for one made in Studio", () => {
     const sentence = "She relaxes in her bath under a sheet mask, smiling at the viewer.";
     const imported = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
-    expect(imported.ok && imported.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
+    expect(imported).toMatchObject({ ok: false, boldSlots: { "implied-cover": [5] } });
     const studio = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
     expect(studio.ok && studio.sentences.get(5)).toBe(sentence);
   });

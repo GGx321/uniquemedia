@@ -5,7 +5,7 @@ import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
-import { namesImpliedCover } from "../../shared/scenes/ownScene";
+import { wearsNoGarment } from "../../shared/scenes/ownScene";
 import { slotCoverageOf } from "../../shared/scenes/template";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate, type WriterMode } from "../money/estimate";
@@ -308,7 +308,8 @@ export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word"
 /**
  * S5.BA9 r2 (review M1): what only the idea writer's «Смелая» variant raises beside `exposure-word` (`readOwnBoldScenes`; never the compose writer's bold reader, so its floor pin
  * leaves it out), of its scene, asked again once like the others:
- * - `implied-cover`: an imported avatar's sentence, or one of unknown origin, that only a towel, a sheet or bath foam covers (`namesImpliedCover`): «lingerie at most» (I5.74, §5.6).
+ * - `implied-cover`: an imported avatar's sentence, or one of unknown origin, that dresses her in no garment (`wearsNoGarment`: only a towel, a sheet, bath foam or bubbles, the duvet,
+ *   or nothing at all): «lingerie at most» (I5.74, §5.6).
  */
 export const OWN_BOLD_PROBLEMS = ["implied-cover"] as const;
 export type BoldProblem = (typeof BOLD_PROBLEMS)[number] | (typeof OWN_BOLD_PROBLEMS)[number];
@@ -970,12 +971,13 @@ const OWN_BOLD_LEVEL: ContentLevel = contentLevelOf({ category: "own", level: un
 
 /**
  * 5a.4 (S5.BA9, I5.76): what only the idea writer's «Смелая» variant refuses: an exposure word, which Seedream refuses to draw (its idea names no outfit to exempt one). S5.BA9 r2 (review
- * M1, I5.74): and, for an imported avatar or one of unknown origin (`impliedNudity` false), a frame that only a towel, a sheet or bath foam covers.
+ * M1, I5.74): and, for an imported avatar or one of unknown origin (`impliedNudity` false), a frame that only a towel, a sheet or bath foam covers; S5.BAR (review M1): any frame she
+ * wears no garment in (`wearsNoGarment`), whatever cover it names, or none.
  */
 function ownBoldProblemsOf(impliedNudity: boolean): (slot: ReadableSlot, sentence: string) => BoldFinding[] {
   return (_slot, sentence) => [
     ...(exposureWordsIn(sentence).length > 0 ? (["exposure-word"] as const) : []),
-    ...(!impliedNudity && namesImpliedCover(sentence) ? (["implied-cover"] as const) : []),
+    ...(!impliedNudity && wearsNoGarment(sentence) ? (["implied-cover"] as const) : []),
   ];
 }
 
