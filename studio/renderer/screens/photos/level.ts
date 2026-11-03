@@ -153,6 +153,8 @@ interface BoldCaptionInput {
   readonly context: { readonly legs: LegsShare; readonly customs: readonly CategorySummary[] };
   /** Whether a Studio-created avatar is in the run: only then can a frame be a sheet, a towel or foam (r2.3 M2). */
   readonly studio: boolean;
+  /** S5.BAR (review L1): whether the run has any of the boldest frames, the tier a sheet, a towel or foam is drawn in: the cover clause says «часть смелых» only then. */
+  readonly anyBold: boolean;
   /** One frame: «Рисует его», not «Рисует их». */
   readonly single: boolean;
 }
@@ -161,7 +163,7 @@ interface BoldCaptionInput {
 function boldCaption(input: BoldCaptionInput): string | null {
   const words = captionWordsOf(input.categories, input.context);
   if (words.clothing.length === 0) return null;
-  const clause = input.studio ? impliedText(words.implied) : null;
+  const clause = input.studio && input.anyBold ? impliedText(words.implied) : null;
   const places = placesText(words.places);
   return [
     `${input.lead} — ${clothingText(words.clothing)}${clause === null ? "" : `; часть смелых — ${clause}`}.`,
@@ -186,6 +188,7 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
     categories: frames.drawing,
     context,
     studio: impliedNudityOf(context.avatar),
+    anyBold: frames.bold > 0,
     single: count === 1,
   });
 }
@@ -218,7 +221,8 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
   if (categories.length === 0) return null;
   const studio = context.avatars.some((avatar) => impliedNudityOf(avatar));
   if (plan === null) {
-    return boldCaption({ lead: "Новые кадры", tiers: `Из каждых ${SHARE_PHOTOS}: ${tiersText(levelCountsOf(SHARE_PHOTOS), "≈")}`, categories, context, studio, single: false });
+    const share = levelCountsOf(SHARE_PHOTOS);
+    return boldCaption({ lead: "Новые кадры", tiers: `Из каждых ${SHARE_PHOTOS}: ${tiersText(share, "≈")}`, categories, context, studio, anyBold: share.bold > 0, single: false });
   }
   const total = plan.totals.toGenerate;
   if (total === 0) return null;
@@ -238,6 +242,7 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
     categories: categories.filter((ref) => drawing.has(ref)),
     context,
     studio,
+    anyBold: sum.bold > 0,
     single: total === 1,
   });
 }
