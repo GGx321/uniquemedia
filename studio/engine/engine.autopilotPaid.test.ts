@@ -471,7 +471,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(committed).toBeLessThanOrEqual(launch.plannedWorstMicros);
   });
 
-  heavyTest("row 2, the set file lost but the ledger holds its reserves: the avatar is skipped as set-unreadable, nothing is sent, and no id is reused (§18 item 8)", async () => {
+  sweepTest("row 2, the set file lost but the ledger holds its reserves: the avatar is skipped as set-unreadable, nothing is sent, and no id is reused (§18 item 8)", { push: null, heavy: null }, async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId } = generationOf(launch.launchId);
     await kill(first);
