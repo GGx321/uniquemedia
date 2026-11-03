@@ -72,8 +72,7 @@ export type Capture = (typeof CAPTURES)[number];
  *
  * 5a.4 (plan s5a4 §5.1, I5.71, I5.73): «Смелая» is every category's. A slot of the five or of a custom category planned at `bold` carries the route and is a «Смелая» frame
  * (`isBoldFrame`); a slot of the five or a custom category stored before 5a.4 (drawn as `flirty`, no route) is not, and reads, renders and animates as before. A nightwear or beach
- * frame is a «Смелая» frame with or without the route. Until the later 5a.4 tasks wire the
- * planner, the five and the custom categories still draw `bold` exactly as `flirty`, and only «Ночнушки и бельё» and «Пляж и бассейн» are «Смелая» categories.
+ * frame is a «Смелая» frame with or without the route.
  */
 export const SceneLevel = z.enum(["ordinary", "flirty", "bold"]);
 export type SceneLevel = z.infer<typeof SceneLevel>;
