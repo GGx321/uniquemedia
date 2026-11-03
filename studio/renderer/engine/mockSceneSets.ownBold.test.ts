@@ -3,7 +3,7 @@ import { PriceBook } from "../../engine/money/prices";
 import { reviewWriteEstimate } from "../../engine/sceneSets/estimate";
 import type { AvatarSummary, SceneSetView, SceneView } from "../../shared/engine";
 import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLine";
-import { OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
+import { namesImpliedCover, OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { MIA, makeMock, unwrap, type Mock } from "./mockEngine.testkit";
 import { MOCK_OWN_BOLD_OUTFIT } from "./mockSceneSets";
@@ -19,6 +19,8 @@ const STUDIO: AvatarSummary = { ...MIA, avatarId: "avatar-ava-0009", name: "Ava"
 const PRICED = { book: PriceBook.fallback(), asOf: "2026-10-28" };
 const MODEL = "x-ai/grok-4.3";
 const IDEA = { kind: "idea", idea: "в белье на кровати", count: 1, shot: "friend" } as const;
+/** S5.BA9 r2: an idea that asks for less than lingerie, in the English the mock's sentence repeats. */
+const TOWEL_IDEA = { kind: "idea", idea: "wrapped in a towel after her shower", count: 1, shot: "friend" } as const;
 
 function mockOf(): Mock {
   return makeMock({ avatars: [MIA, STUDIO], photos: [] });
@@ -37,10 +39,10 @@ async function composed(m: Mock, avatarId: string, level: "flirty" | "bold"): Pr
   return setOf(m, avatarId);
 }
 
-/** The set with one own scene written from «в белье на кровати». */
-async function withOwn(m: Mock, avatarId: string, level: "flirty" | "bold"): Promise<SceneSetView> {
+/** The set with one own scene written from «в белье на кровати» (or `target`). */
+async function withOwn(m: Mock, avatarId: string, level: "flirty" | "bold", target: typeof IDEA | typeof TOWEL_IDEA = IDEA): Promise<SceneSetView> {
   const view = await composed(m, avatarId, level);
-  await unwrap(m.client.request("scenes.write", { sceneSetId: view.sceneSetId, revision: view.revision, target: IDEA, acceptedWorstMicros: WORST }));
+  await unwrap(m.client.request("scenes.write", { sceneSetId: view.sceneSetId, revision: view.revision, target, acceptedWorstMicros: WORST }));
   m.scheduler.runAll();
   return setOf(m, avatarId);
 }
@@ -134,5 +136,22 @@ describe("the own scene of a «Смелая» set on the mock (S5.BA9)", () => {
       const result = await unwrap(m.client.request("scenes.edit", { sceneSetId: view.sceneSetId, revision: view.revision, op: { op: "text", sceneId: ownOf(view).sceneId, text: "She lies across her bed in black lingerie." } }));
       expect({ level, problem: "problem" in result ? result.problem.reason : null }).toEqual({ level, problem: ok ? null : "revealing-word" });
     }
+  });
+});
+
+// S5.BA9 r2 (review M1): the mock's writer writes what the engine's reader keeps for the avatar's origin. An idea that asks for a towel is drawn in it alone only for an avatar made in
+// Studio; an imported avatar's is drawn in the «Смелая» outfit (the engine refuses a towel alone for it, `implied-cover`) and ends with the kept coverage.
+describe("an idea that asks for a towel at «Смелая» on the mock (S5.BA9 r2)", () => {
+  test("an imported avatar's is drawn in the «Смелая» outfit, never in the towel alone, and ends with the kept coverage", async () => {
+    const own = ownOf(await withOwn(mockOf(), MIA.avatarId, "bold", TOWEL_IDEA));
+    expect(own.text).toContain(MOCK_OWN_BOLD_OUTFIT);
+    expect(namesImpliedCover(own.text ?? "")).toBe(false);
+    expect(own.text?.endsWith(OWN_BOLD_COVERAGE)).toBe(true);
+  });
+
+  test("an avatar made in Studio's is drawn as the idea says, in the towel alone", async () => {
+    const own = ownOf(await withOwn(mockOf(), STUDIO.avatarId, "bold", TOWEL_IDEA));
+    expect(own.text).not.toContain(MOCK_OWN_BOLD_OUTFIT);
+    expect(namesImpliedCover(own.text ?? "")).toBe(true);
   });
 });

@@ -34,7 +34,7 @@ import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared
 import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
 import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { slotCoverageOf } from "../../shared/scenes/template";
-import { ownCoverageOf, ownSceneMarkerOf, ownSceneRouteOf } from "../../shared/scenes/ownScene";
+import { namesImpliedCover, ownCoverageOf, ownSceneMarkerOf, ownSceneRouteOf } from "../../shared/scenes/ownScene";
 import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, customBoldDraw, legsDraw, localTexts, openedPlace, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -541,7 +541,11 @@ function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string 
     // 5a.4 (S5.BA9): an own scene of a «Смелая» set is written as the idea writer's bold variant writes it: in a «Смелая» outfit (`MOCK_OWN_BOLD_OUTFIT`), with no number (a number is held
     // to the age rule on a «Смелая» frame), then the coverage by the avatar's origin, appended as the engine's reader appends it.
     if (scene.route !== "seedream") return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
-    const sentence = `She enjoys ${scene.idea ?? "a quiet moment"} in ${MOCK_OWN_BOLD_OUTFIT} in her bedroom, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
+    const detail = BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her";
+    // S5.BA9 r2 (review M1): an idea that asks for a towel, a sheet or foam alone is drawn so only for an avatar made in Studio; the engine's reader refuses that frame for any other
+    // (`implied-cover`), so an imported avatar's is drawn in the «Смелая» outfit.
+    const asIdea = `She enjoys ${scene.idea ?? "a quiet moment"} in her bedroom, ${detail}.`;
+    const sentence = impliedNudity && namesImpliedCover(asIdea) ? asIdea : `She enjoys ${scene.idea ?? "a quiet moment"} in ${MOCK_OWN_BOLD_OUTFIT} in her bedroom, ${detail}.`;
     const coverage = ownCoverageOf(impliedNudity);
     return coverage === undefined ? sentence : `${sentence} ${coverage}`;
   }
