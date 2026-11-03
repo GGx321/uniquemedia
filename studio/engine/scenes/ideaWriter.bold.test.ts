@@ -194,11 +194,37 @@ describe("the bold variant's reader (S5.BA9)", () => {
     ["under the duvet", "She lies in bed under the duvet, smiling at the viewer."],
     ["under a white blanket", "She lies under a white blanket on her bed, looking at the viewer."],
     ["the covers pulled up to her chest", "She lies in bed, the covers pulled up to her chest, smiling."],
+    // S5.BAR re-check R1: lace that is the bedding, not what she wears.
+    ["lace sheets", "She lies tangled in lace sheets, smiling at the viewer."],
+    ["lacy white sheets", "She lies in lacy white sheets, smiling at the viewer."],
   ] as const;
 
   test.each(NO_GARMENT_WITH_A_COVER)("an imported avatar's sentence with no garment and %s is refused for its scene (implied-cover)", (_cover, sentence) => {
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
     expect(read).toMatchObject({ ok: false, boldSlots: { "implied-cover": [5] } });
+  });
+
+  // S5.BAR re-check R1: what she wears that no list held, so the inverted test refused a dressed frame and paid a re-ask. Each is a garment: kept, with the kept coverage.
+  test.each([
+    ["a knit two-piece", "She sits on her balcony in a knit two-piece, smiling at the viewer."],
+    ["a crochet two-piece", "She sits by the pool in a crochet two-piece, smiling at the viewer."],
+    ["a monokini", "She stands by the pool in a black monokini, smiling at the viewer."],
+    ["a tankini", "She lounges by the pool in a striped tankini, smiling at the viewer."],
+    ["a bralet and boyshorts", "She sits on the bed in a lace bralet and boyshorts, smiling at the viewer."],
+    ["a sundress", "She stands in her room in a white sundress, smiling at the viewer."],
+    ["a romper", "She sits on her bed in a satin romper, smiling at the viewer."],
+    ["a peignoir", "She sits on her balcony in a silk peignoir, smiling at the viewer."],
+    ["a nightshirt", "She sits on the bed in an oversized nightshirt, smiling at the viewer."],
+    ["lace with no noun", "She lies on her bed in lace, smiling at the viewer."],
+    ["a lacy black number", "She lies on her bed in a lacy black number, smiling at the viewer."],
+    ["a leotard", "She stretches on her mat in a leotard, smiling at the viewer."],
+    ["a silk wrap", "She lies on the bed in a silk wrap, smiling at the viewer."],
+    ["a lone bustier", "She sits on her bed in a bustier, smiling at the viewer."],
+    ["a bodystocking", "She lies on her bed in a black lace bodystocking, smiling at the viewer."],
+    ["a silk pajama set", "She lies on her bed in a silk pajama set, smiling at the viewer."],
+  ])("an imported avatar's frame in %s is a garment frame: kept, with the kept coverage", (_garment, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
   });
 
   test.each([

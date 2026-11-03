@@ -60,11 +60,28 @@ const IMPLIED_COVERS = [
   { forms: coverFormsOf(String.raw`foam\b`), coverage: COVER.foam },
 ] as const;
 
+/** S5.BAR re-check R1: the bedding and the cloth around her that «in lace» or «in lacy» may name, which is no garment («tangled in lace sheets», «in lacy white sheets»). */
+const LACE_NOT_WORN = String.raw`(?!\s*-)(?!\s+(?:[a-z]+\s+)?(?:bed)?(?:sheets?|covers|duvets?|blankets?|curtains?|pillows?|towels?)\b)`;
+
 /**
  * S5.BA9 round 3 (review MEDIUM): what she wears that neither the banks' lingerie and swimwear lists nor the motion check's `GARMENT` names: a lace, lingerie, cotton, satin or silk set,
- * a teddy (never a teddy bear), a slip (the garment: after «a», «her» or its fabric), a chemise, a negligee, a one-piece, knickers, a corset.
+ * a teddy (never a teddy bear), a slip (the garment: after «a», «her» or its fabric), a chemise, a negligee, a one-piece, knickers, a corset. S5.BAR re-check R1: since an imported
+ * avatar's frame in no garment is refused (`wearsNoGarment`), a garment no list knew cost a paid re-ask, so more of them: a two-piece, a monokini, a tankini, a bralet, boyshorts, a
+ * sundress, a romper, a playsuit, a jumpsuit, a peignoir, a nightshirt, a leotard, a bustier, a bodystocking, a pajama (set, shorts), a silk, satin, lace, chiffon or sheer wrap, and
+ * «in lace» or «in lacy» with no garment's name after it («in lace», «in black lace», «in a lacy black number»), never the bedding (`LACE_NOT_WORN`).
  */
-const MORE_WORN = /\b(?:lace|lingerie|cotton|satin|silk)\s+sets?\b|\bteddy\b(?!\s+bears?\b)|\bteddies\b|\b(?:a|her|satin|silk|lace)\s+slip\b|\bchemises?\b|\bnegligees?\b|\bone-pieces?\b|\bknickers\b|\bcorsets?\b/i;
+const MORE_WORN = new RegExp(
+  [
+    String.raw`\b(?:lace|lingerie|cotton|satin|silk)\s+sets?\b`,
+    String.raw`\bteddy\b(?!\s+bears?\b)|\bteddies\b`,
+    String.raw`\b(?:a|her|satin|silk|lace)\s+slip\b`,
+    String.raw`\b(?:chemises?|negligees?|one-pieces?|knickers|corsets?)\b`,
+    String.raw`\b(?:two-pieces?|monokinis?|tankinis?|bralets?|boyshorts|sundress(?:es)?|rompers?|playsuits?|jumpsuits?|peignoirs?|nightshirts?|leotards?|bustiers?|bodystockings?|p[ay]jama)\b`,
+    String.raw`\b(?:silk|satin|lace|chiffon|sheer)\s+wraps?\b`,
+    String.raw`\bin\s+(?:(?:a|an|her)\s+)?(?:[a-z]+\s+)?lac(?:e|y)\b${LACE_NOT_WORN}`,
+  ].join("|"),
+  "i",
+);
 
 /** Whether she wears a garment in the sentence: lingerie, swimwear (the banks' lists), any garment the motion check names (`GARMENT`; the towel is a cover here), or `MORE_WORN`. */
 function wearsAGarment(sentence: string): boolean {
