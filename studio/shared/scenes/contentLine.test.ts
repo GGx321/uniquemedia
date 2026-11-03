@@ -149,6 +149,35 @@ describe("the levels", () => {
   });
 });
 
+// S5.BA9 r2 (AGE): the core age rule of the kept minor-age guard holds on every text the content line reads, at every level, «Смелая» included: an explicit age under 18 or an under-21
+// bound (ageText.ts's `ageMentions` and `ageUpperBounds`). It is a youth-word problem, the age told as the rule read it, so every site that reads the line refuses it as it refuses a youth word.
+describe("the core age rule, at every level (S5.BA9 r2)", () => {
+  const NAMED = CONTENT_LEVELS.map((level) => [typeof level === "string" ? level : level.kind, level] as const);
+
+  test.each(NAMED)("%s: an explicit age under 18, in digits, in words or in Russian, is a youth-word problem named by the age", (_name, level) => {
+    expect(contentProblems("She is 17 and lies on her bed.", level)).toEqual([{ reason: "youth-word", words: ["17"] }]);
+    expect(contentProblems("She is sixteen and lies on her bed.", level)).toEqual([{ reason: "youth-word", words: ["16"] }]);
+    expect(contentProblems("Ей 16, она сидит на балконе.", level)).toEqual([{ reason: "youth-word", words: ["16"] }]);
+  });
+
+  test.each(NAMED)("%s: an under-21 bound is one too", (_name, level) => {
+    expect(contentProblems("She looks under 21.", level)).toEqual([{ reason: "youth-word", words: ["21"] }]);
+  });
+
+  test.each(NAMED)("%s: one off each limit is not: an age of 18 and a bound of 22", (_name, level) => {
+    expect(contentProblems("She is 18 and lies on her bed.", level)).toEqual([]);
+    expect(contentProblems("She looks under 22.", level)).toEqual([]);
+  });
+
+  test.each(NAMED)("%s: a count or a clock time is no age", (_name, level) => {
+    expect(contentProblems("She sips her 2 coffees on her balcony at 7 in the morning.", level)).toEqual([]);
+  });
+
+  test("a youth word and an age are told together, the youth words first", () => {
+    expect(contentProblems("A teenage girl who is 15 lies on her bed.", "ordinary")).toEqual([{ reason: "youth-word", words: ["teenage", "girl", "15"] }]);
+  });
+});
+
 // S5.9c (plan s5a3 §5.1), widened by 5a.4 (S5.BA1, I5.73): the level a slot or a scene is held to follows its CATEGORY or its ROUTE, never its mix level. `level` and `route` are
 // required keys (`SceneLevel | undefined`, `SceneRoute | undefined`), so a caller that forgets one does not compile.
 describe("contentLevelOf", () => {
