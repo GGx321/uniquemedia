@@ -341,3 +341,16 @@ describe("a custom category at «Смелая» on the mock is the engine's (pla
     expect({ route: routed?.route, branch: branchOf({ location: routed?.place?.location }), world: WORLDS.includes(routed?.place?.world ?? "") }).toEqual({ route: "seedream", branch: "rooms", world: true });
   });
 });
+
+// S5.BAR (review L4): the engine's bold writer prompt forbids books and papers (its standing «No paper» line), so the mock's custom «Смелая» scene never names «a book beside her».
+// Six scenes turn the detail through every value it has, for either origin.
+describe("the mock's custom «Смелая» scene names no book (S5.BAR L4)", () => {
+  test.each([
+    ["an imported", MIA],
+    ["a Studio-created", STUDIO],
+  ] as const)("%s avatar's six scenes of a custom category", async (_origin, avatar) => {
+    const view = await composed(mockOf(), avatar, 6, [TRIP]);
+    expect(view.scenes.length).toBe(6);
+    expect(view.scenes.filter((s) => /\bbooks?\b/i.test(s.text ?? "")).map((s) => s.sceneId)).toEqual([]);
+  });
+});

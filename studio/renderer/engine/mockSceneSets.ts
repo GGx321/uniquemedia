@@ -524,11 +524,10 @@ function ideaAngle(idea: string): "back" | "profile" | undefined {
 /**
  * The sentence the mock's writer gives a scene; a write's number makes a rewrite say something new (the compose's own sentence is take 0, as before). 5a.4 (S5.BA7, plan s5a4 §5.3.3): a custom
  * category's «Смелая» scene is written as the bold writer must write it: what the engine's bold reader accepts (its place opened with the place's own preposition, its world named, «she» and
- * its moment word for word, its outfit as given), then the coverage sentence by the avatar's origin, appended as the engine's `boldReader` appends it.
+ * its moment word for word, its outfit as given), then the coverage sentence by the avatar's origin, appended as the engine's `boldReader` appends it. S5.BAR (review L4): no book among its
+ * details, as no paper in an own scene's (S5.BA9 r2): the bold writer's prompt and the idea writer's forbid books and papers (their «No paper» line).
  */
-const BOLD_DETAILS = ["a cup of tea beside her", "a book beside her", "a scarf beside her"] as const;
-/** S5.BA9 r2 (review L4): an own «Смелая» scene's details: the idea writer's prompt forbids books and papers (its «No paper» line), so the book is not among them. */
-const OWN_BOLD_DETAILS = BOLD_DETAILS.filter((detail) => !/\bbook\b/.test(detail));
+const BOLD_DETAILS = ["a cup of tea beside her", "a scarf beside her"] as const;
 
 /**
  * 5a.4 (S5.BA9): what the mock's own scene of a «Смелая» set wears: the first general «Смелая» outfit of «Ночнушки и бельё» that the ordinary line refuses as revealing alone (bank data, so the mock names no
@@ -543,7 +542,7 @@ function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string 
     // 5a.4 (S5.BA9): an own scene of a «Смелая» set is written as the idea writer's bold variant writes it: in a «Смелая» outfit (`MOCK_OWN_BOLD_OUTFIT`), with no number (a number is held
     // to the age rule on a «Смелая» frame), then the coverage by the avatar's origin, appended as the engine's reader appends it.
     if (scene.route !== "seedream") return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
-    const detail = OWN_BOLD_DETAILS[(scene.sceneId + take) % OWN_BOLD_DETAILS.length] ?? "a cup of tea beside her";
+    const detail = BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her";
     // S5.BA9 r2 (review M1): an idea that asks for a towel, a sheet or foam alone is drawn so only for an avatar made in Studio; the engine's reader refuses that frame for any other
     // (`implied-cover`), so an imported avatar's is drawn in the «Смелая» outfit.
     const asIdea = `She enjoys ${scene.idea ?? "a quiet moment"} in her bedroom, ${detail}.`;
