@@ -107,6 +107,17 @@ describe("the card's caption at «Смелая» (§5.9 row 1)", () => {
     });
   });
 
+  // S5.BAR (review L1): the clause speaks of the boldest frames, so it is there only when the request has one (1 photo of «Дом» is one flirty frame, 2 are one bold and one flirty).
+  describe("the cover clause only when a frame is among the boldest (S5.BAR L1)", () => {
+    test("Ava, 1 photo of «Дом»: no bold frame, no clause", () => {
+      expect(cardLevelCaption("bold", 1, ["home"], card(AVA))).not.toContain("часть смелых");
+    });
+
+    test("Ava, 2 photos of «Дом»: one bold frame, the clause", () => {
+      expect(cardLevelCaption("bold", 2, ["home"], card(AVA))).toContain("часть смелых");
+    });
+  });
+
   describe("a part whose count is 0 is left out, and N = 1 reads «Кадр» (r2.3 L5)", () => {
     test("2 photos: 1 bold, 1 flirty, no «скромнее — 0»", () => {
       expect(cardLevelCaption("bold", 2, ["home"], card(BEA))).toBe(`Все 2${NB}кадра — в белье или атласе. Откровеннее всего — 1, кокетливо — 1. Места — дома. ${THE_RUN}`);
@@ -184,6 +195,11 @@ describe("«Автопилот»'s caption at «Смелая» (§5.9 rows 19, 1
 
   test("only imported avatars selected: no clause", () => {
     expect(launchLevelCaption("bold", plan, ["home"], launch([BEA, CLEO]))).not.toContain("часть смелых");
+  });
+
+  test("S5.BAR (review L1): three avatars with one new photo each have no bold frame between them: no clause, though Ava is Studio-created", () => {
+    const ones = { avatars: [avatar(1), avatar(1), avatar(1)], totals: { toGenerate: 3 } };
+    expect(launchLevelCaption("bold", ones, ["home"], launch([AVA, BEA, CLEO]))).not.toContain("часть смелых");
   });
 
   test("no avatar selected: no clause", () => {
