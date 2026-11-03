@@ -102,9 +102,11 @@ describe("the own scene of a «Смелая» set on the mock (S5.BA9)", () => {
     expect(own.text?.endsWith(OWN_BOLD_COVERAGE)).toBe(false);
   });
 
-  test("the scene view of an own scene says no route at either level (the contract's own scene has none)", async () => {
-    const m = mockOf();
-    expect("route" in ownOf(await withOwn(m, MIA.avatarId, "bold"))).toBe(false);
+  // 2026-11-03, S5.BA9 r2 (review L1): this row pinned «the scene view of an own scene says no route at either level». The field is optional on every scene, and an own scene of a
+  // «Смелая» set IS drawn on the route, so the view says so, as the engine's does (sceneSets/view.ts); below «Смелая» it still says none.
+  test("the scene view of an own scene says the route in a «Смелая» set, and none in a «Кокетливая» one", async () => {
+    expect(ownOf(await withOwn(mockOf(), MIA.avatarId, "bold")).route).toBe("seedream");
+    expect("route" in ownOf(await withOwn(mockOf(), MIA.avatarId, "flirty"))).toBe(false);
   });
 
   test("a run from the «Смелая» set prices the own scene at the 2K unit, and its photo is on the route", async () => {

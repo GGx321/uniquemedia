@@ -8,6 +8,7 @@ import { assembleRun } from "../scenes/assembler";
 import type { OwnPlanSlot } from "../scenes/schema";
 import { applyEdit } from "./edit";
 import { approvalRefusal, runSources } from "./toRun";
+import { buildSceneSetView } from "./view";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -58,6 +59,20 @@ describe("an own scene's run slot (S5.BA9)", () => {
     const plan = buildSceneRunPlan({ runId: "run-aaaa-0001", avatarId: set.avatarId, createdAt: "2026-10-28T12:00:00.000Z", sceneSetId: set.sceneSetId, imageAgeCheck: "off", models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" }, capMicros: 1_000_000, plannedWorstMicros: 1_000_000, scenes: runSources(set) });
     expect("route" in (plan.scenes.slots.find((s) => s.category === "own") ?? {})).toBe(false);
     expect(plan.models.bold).toBeUndefined();
+  });
+});
+
+// S5.BA9 r2 (review L1): the window is shown the route an own scene is drawn on, as it is shown a planned scene's (the field is optional on every scene), so the set's models line
+// and its estimate read it as they read any «Смелая» frame.
+describe("the scene view of an own scene says its route (S5.BA9 r2)", () => {
+  const ownView = (set: StoredSceneSet) => buildSceneSetView(set, { ledger: null, inFlight: new Set(), live: null, used: false }).scenes.find((s) => s.sceneId === 4);
+
+  test("in a «Смелая» set it is on the Seedream route", () => {
+    expect(ownView(setAt("bold"))).toMatchObject({ origin: "own", route: "seedream" });
+  });
+
+  test.each([["«Обычная»", undefined], ["«Кокетливая»", "flirty"]] as const)("in a %s set it says none", (_name, level) => {
+    expect("route" in (ownView(setAt(level, "She sips coffee on a balcony.")) ?? {})).toBe(false);
   });
 });
 

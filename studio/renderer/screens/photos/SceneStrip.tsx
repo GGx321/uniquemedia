@@ -70,7 +70,7 @@ export function modelSegments(view: EngineView, textModel: string): string[] {
 /**
  * The set's models line and its title. 5a.4 (§5.9 row 24; mockup 66a): when every scene left in the set is on the Seedream route (the engine's `route`, never guessed), Seedream 5 Pro
  * draws all of it in 2K whatever the settings' model, so the line names it alone: «Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3». A set with a scene off the
- * route (stored before 5a.4, or an own scene) keeps the settings' model and names the bold frames' last (S5.9g, mockup 49).
+ * route (stored before 5a.4, or an own scene of a set below «Смелая»: S5.BA9 routes those of a «Смелая» set) keeps the settings' model and names the bold frames' last (S5.9g, mockup 49).
  */
 export function setModels(view: EngineView, set: SceneSetView): { segments: string[]; title: string } {
   const kept = set.scenes.filter((s) => !s.removed);
