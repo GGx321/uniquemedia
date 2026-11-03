@@ -163,3 +163,18 @@ describe("an idea that asks for a towel at «Смелая» on the mock (S5.BA9 
     expect(own.text?.endsWith(` ${COVER.towelOpen}`)).toBe(true);
   });
 });
+
+// S5.BA9 r2 (review L4): the engine's bold idea prompt forbids books and papers (its standing «No paper» line), so the mock's own «Смелая» scene never draws «a book beside her», whatever
+// the take turns its detail to. Two idea writes on one set turn the detail through every value.
+describe("the mock's own «Смелая» scene names no book (S5.BA9 r2)", () => {
+  test("two idea writes in a row, in every scene they write", async () => {
+    const m = mockOf();
+    let view = await withOwn(m, MIA.avatarId, "bold");
+    await unwrap(m.client.request("scenes.write", { sceneSetId: view.sceneSetId, revision: view.revision, target: IDEA, acceptedWorstMicros: WORST }));
+    m.scheduler.runAll();
+    view = await setOf(m, MIA.avatarId);
+    const own = view.scenes.filter((s) => s.origin === "own");
+    expect(own.length).toBe(2);
+    expect(own.filter((s) => /\bbooks?\b/i.test(s.text ?? "")).map((s) => s.sceneId)).toEqual([]);
+  });
+});
