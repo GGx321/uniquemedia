@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
 import { draftOf, generatingDraftOf, LAUNCH_MS, network, wiringKit } from "./testing/wiringKit";
+import { heavyTest, sweepTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -14,7 +15,7 @@ const dir = useEngineDir("studio-engine-autopilot-wiring-");
 const kit = wiringKit(dir);
 
 describe("the autopilot's steps are the engine's default (S4.6w)", () => {
-  test(
+  heavyTest(
     "a library-only launch ends done with its videos on disk, and spends nothing: no request, no ledger line",
     async () => {
       const net = network();
@@ -38,8 +39,10 @@ describe("the autopilot's steps are the engine's default (S4.6w)", () => {
     LAUNCH_MS + 30_000,
   );
 
-  test(
+  // The one launch a push runs end to end (the paid path, the render, the settle); the heavy run also walks the other two.
+  sweepTest(
     "a generating launch with the review off composes, draws, renders and ends done with its videos on disk",
+    { push: null, heavy: null },
     async () => {
       const net = network();
       const avatarId = await kit.seedGeneratingAvatar();
@@ -56,7 +59,7 @@ describe("the autopilot's steps are the engine's default (S4.6w)", () => {
     LAUNCH_MS + 30_000,
   );
 
-  test(
+  heavyTest(
     "with the review on the launch waits in awaiting-review and draws nothing until «Продолжить запуск», which brings it to done",
     async () => {
       const net = network();

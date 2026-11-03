@@ -8,6 +8,7 @@ import { within } from "./testing/within";
 import { failed, ledgerLines, ok, until, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender, ledgerSpentOf, type Started } from "./testing/crashKit";
 import { draftOf, generatingDraftOf, network, type WiringNetwork } from "./testing/wiringKit";
+import { heavyTest, sweepTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -135,68 +136,86 @@ async function reach(scene: Scene, phase: Phase): Promise<void> {
   await within(scene.stop(), 60_000, "«Стоп»");
 }
 
+interface Cell {
+  label: string;
+  phase: Phase;
+  point: Point;
+}
+
+/**
+ * The cells a push runs (the other ten run in the heavy run, every cell as it was): a stop killed with the writer's request in flight, before the set's rename (the paid step is open), and a stop
+ * of a launch whose photos are drawn and settled, killed just before the final write (the sets already released: the window F1 closes).
+ */
+const PUSH_CELLS: ReadonlySet<string> = new Set(["composing · before the set's rename", "drawn · before the final write"]);
+
+async function runCell({ phase, point }: Cell): Promise<void> {
+  // The drawn phase needs a slice folder: the review is off there so the paid part draws at once; every other phase waits for the owner's review (or for the writer).
+  const review = phase !== "drawn" && phase !== "composing";
+  const { scene, state } = await within(atPhase(phase, point, review), 90_000, "the launch to start");
+  if (phase === "drawn") {
+    await kit.waitFile(scene.launchId, "the draw to finish", (f) => f.avatars[0]?.phase === "montage");
+    await within(scene.stop(), 60_000, "«Стоп»");
+  } else await within(reach(scene, phase), 90_000, "the phase");
+  // A stop with a request in flight answers at once and finishes behind the answer: the copy is taken when it gets to the write.
+  await until(() => state.taken, "the copy inside the stop", 30_000);
+  await kit.kill(scene.first);
+
+  // What the copy holds: the launch still `stopping` (the final write had not landed) and the set as the point says.
+  const onDisk = kit.fileOf(scene.launchId);
+  expect(onDisk.status).toBe("stopping");
+  // F1: the figure is frozen before the sets are let go, so it is on disk at every point of the unlink.
+  expect(onDisk.reviewWritesMicros).toBe(0);
+  // The set's file in the copy: still linked before the rename, released after it, and already released when only the final write is left.
+  const setFile = readdirSync(kit.libraryDir(), { recursive: true }).map(String).find((name) => basename(name) === `${scene.sceneSetId}.json`);
+  expect(setFile).not.toBeUndefined();
+  const setOnDisk = parsed(readFileSync(join(kit.libraryDir(), setFile ?? ""), "utf8"));
+  expect(setOnDisk?.launchId !== undefined).toBe(point === "before the set's rename");
+
+  const net2 = network();
+  const second = await kit.boot(net2, fakeRender());
+  await second.engine.settled();
+  const view = await kit.waitFor(second, scene.launchId, "the stop to be finished", (v) => v.status === "stopped", 30_000);
+  expect(view.spentMicros).toBeLessThanOrEqual(view.plannedWorstMicros);
+
+  // Consistent: stopped, its group gone, no open reserve, nothing sent by the restart.
+  const file = kit.fileOf(scene.launchId);
+  expect(file.status).toBe("stopped");
+  expect(file.reviewWritesMicros).toBe(0);
+  expect(file.paidHold).toBeNull();
+  expect(second.engine.launchGroups.groupOf({ attemptId: `${scene.sceneSetId}:writer-9#1`, scope: { avatarJobId: "job-x" } })).toBeNull();
+  expect(second.engine.budget?.ledger.openReserves()).toEqual([]);
+  expect(net2.paidCalls()).toEqual([]);
+
+  // Returned to the owner: no `launchId` on the set or on its run, and the set's own commands are not refused as the launch's.
+  const listed = await second.engine.library?.sceneSets.list(scene.avatarId);
+  expect(listed?.sets.map((s) => s.sceneSetId)).toEqual([scene.sceneSetId]);
+  expect(listed?.sets[0]?.launchId).toBeUndefined();
+  expect(listed?.sets[0]?.launchDraw).toBeUndefined();
+  const runs = ok(await kit.call(second, "runs.list", {}));
+  if (runs.type !== "runs.list") throw new Error("wrong answer");
+  expect(runs.result.runs.filter((r) => r.launchId !== undefined)).toEqual([]);
+  const set = listed?.sets[0];
+  if (phase === "drawn") {
+    // A set drawn from stays used; its run is the owner's own: the manual commands answer for their own reasons, never as «launch-set».
+    const resume = await kit.call(second, "runs.resume", { runId: set?.runId ?? "", acceptedWorstMicros: 1 });
+    if (!resume.ok) expect(resume.error.sceneReason).not.toBe("launch-set");
+  } else {
+    const edited = ok(await kit.call(second, "scenes.edit", { sceneSetId: scene.sceneSetId, revision: set?.revision ?? 0, op: { op: "text", sceneId: 1, text: "The owner rewrites the first scene after the stop." } }));
+    expect(edited.type).toBe("scenes.edit");
+    const discarded = await kit.call(second, "scenes.discard", { sceneSetId: scene.sceneSetId });
+    expect(discarded.ok || discarded.error.sceneReason !== "launch-set").toBe(true);
+  }
+  // The launch can not be resumed or stopped again: it is over.
+  failed(await kit.call(second, "autopilot.resume", { launchId: scene.launchId, acceptedRemainingMicros: 0 }));
+}
+
 describe("a kill during the unlink of «Стоп»: the next start finishes it and every set is back with its owner (A20)", () => {
-  const cells = PHASES.flatMap((phase) => POINTS.map((point) => ({ label: `${phase} · ${point}`, phase, point })));
-  test.each(cells)("$label", async ({ phase, point }) => {
-    // The drawn phase needs a slice folder: the review is off there so the paid part draws at once; every other phase waits for the owner's review (or for the writer).
-    const review = phase !== "drawn" && phase !== "composing";
-    const { scene, state } = await within(atPhase(phase, point, review), 90_000, "the launch to start");
-    if (phase === "drawn") {
-      await kit.waitFile(scene.launchId, "the draw to finish", (f) => f.avatars[0]?.phase === "montage");
-      await within(scene.stop(), 60_000, "«Стоп»");
-    } else await within(reach(scene, phase), 90_000, "the phase");
-    // A stop with a request in flight answers at once and finishes behind the answer: the copy is taken when it gets to the write.
-    await until(() => state.taken, "the copy inside the stop", 30_000);
-    await kit.kill(scene.first);
-
-    // What the copy holds: the launch still `stopping` (the final write had not landed) and the set as the point says.
-    const onDisk = kit.fileOf(scene.launchId);
-    expect(onDisk.status).toBe("stopping");
-    // F1: the figure is frozen before the sets are let go, so it is on disk at every point of the unlink.
-    expect(onDisk.reviewWritesMicros).toBe(0);
-    // The set's file in the copy: still linked before the rename, released after it, and already released when only the final write is left.
-    const setFile = readdirSync(kit.libraryDir(), { recursive: true }).map(String).find((name) => basename(name) === `${scene.sceneSetId}.json`);
-    expect(setFile).not.toBeUndefined();
-    const setOnDisk = parsed(readFileSync(join(kit.libraryDir(), setFile ?? ""), "utf8"));
-    expect(setOnDisk?.launchId !== undefined).toBe(point === "before the set's rename");
-
-    const net2 = network();
-    const second = await kit.boot(net2, fakeRender());
-    await second.engine.settled();
-    const view = await kit.waitFor(second, scene.launchId, "the stop to be finished", (v) => v.status === "stopped", 30_000);
-    expect(view.spentMicros).toBeLessThanOrEqual(view.plannedWorstMicros);
-
-    // Consistent: stopped, its group gone, no open reserve, nothing sent by the restart.
-    const file = kit.fileOf(scene.launchId);
-    expect(file.status).toBe("stopped");
-    expect(file.reviewWritesMicros).toBe(0);
-    expect(file.paidHold).toBeNull();
-    expect(second.engine.launchGroups.groupOf({ attemptId: `${scene.sceneSetId}:writer-9#1`, scope: { avatarJobId: "job-x" } })).toBeNull();
-    expect(second.engine.budget?.ledger.openReserves()).toEqual([]);
-    expect(net2.paidCalls()).toEqual([]);
-
-    // Returned to the owner: no `launchId` on the set or on its run, and the set's own commands are not refused as the launch's.
-    const listed = await second.engine.library?.sceneSets.list(scene.avatarId);
-    expect(listed?.sets.map((s) => s.sceneSetId)).toEqual([scene.sceneSetId]);
-    expect(listed?.sets[0]?.launchId).toBeUndefined();
-    expect(listed?.sets[0]?.launchDraw).toBeUndefined();
-    const runs = ok(await kit.call(second, "runs.list", {}));
-    if (runs.type !== "runs.list") throw new Error("wrong answer");
-    expect(runs.result.runs.filter((r) => r.launchId !== undefined)).toEqual([]);
-    const set = listed?.sets[0];
-    if (phase === "drawn") {
-      // A set drawn from stays used; its run is the owner's own: the manual commands answer for their own reasons, never as «launch-set».
-      const resume = await kit.call(second, "runs.resume", { runId: set?.runId ?? "", acceptedWorstMicros: 1 });
-      if (!resume.ok) expect(resume.error.sceneReason).not.toBe("launch-set");
-    } else {
-      const edited = ok(await kit.call(second, "scenes.edit", { sceneSetId: scene.sceneSetId, revision: set?.revision ?? 0, op: { op: "text", sceneId: 1, text: "The owner rewrites the first scene after the stop." } }));
-      expect(edited.type).toBe("scenes.edit");
-      const discarded = await kit.call(second, "scenes.discard", { sceneSetId: scene.sceneSetId });
-      expect(discarded.ok || discarded.error.sceneReason !== "launch-set").toBe(true);
-    }
-    // The launch can not be resumed or stopped again: it is over.
-    failed(await kit.call(second, "autopilot.resume", { launchId: scene.launchId, acceptedRemainingMicros: 0 }));
-  });
+  const cells: Cell[] = PHASES.flatMap((phase) => POINTS.map((point) => ({ label: `${phase} · ${point}`, phase, point })));
+  for (const cell of cells) {
+    // A push cell also runs in the heavy run, so the heavy run walks all twelve.
+    if (PUSH_CELLS.has(cell.label)) sweepTest(cell.label, { push: cell, heavy: cell }, runCell);
+    else heavyTest(cell.label, () => runCell(cell));
+  }
 });
 
 

@@ -10,6 +10,7 @@ import { crashKit, expectLaunchInvariants, fakeRender, realRender, type Started 
 import { draftOf, generatingDraftOf, network, type WiringNetwork } from "./testing/wiringKit";
 import { within } from "./testing/within";
 import { readVideoRecordFiles } from "./videos/listing";
+import { heavyTest, sweepTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -346,46 +347,66 @@ const BOUNDARIES: { id: string; name: string; halt: Halt; expected: Expected; re
   },
 ];
 
-describe("the crash matrix: a kill at each step boundary of plan §3.6, then «Продолжить»", () => {
-  const cells = BOUNDARIES.flatMap((b) => [true, false].map((review) => ({ label: `${b.name} · review ${review ? "ON" : "OFF"}`, boundary: b, review })));
-  test.each(cells)("$label", async ({ boundary, review }) => {
-    const halted = await within(boundary.halt({ review }), 150_000, "reaching the boundary");
-    const firstRequests = await kit.crash(halted.first, halted.nets);
+interface Cell {
+  label: string;
+  boundary: (typeof BOUNDARIES)[number];
+  review: boolean;
+}
 
-    const net2 = network();
-    const second = await kit.boot(net2, boundary.realRender === true ? realRender : fakeRender());
-    const paused = (await kit.getLaunch(second, halted.launchId)).launch;
-    expect(paused.status).toBe("paused");
-    expect(paused.resumeBlockedBy).toBe(boundary.expected.reconcile ? "reconcile-required" : null);
-    // A5: a restart makes no reserve and no render until «Продолжить».
+/**
+ * The cells a push runs (the rest of the matrix runs in the heavy run, every cell as it was): a kill before the paid draw (row 4), with a draw request in flight (row 5b: its reserve is open, the view
+ * demands a reconcile and no paid photo is drawn twice, the one cell that checks this on a real engine), in the middle of a render (row 9, nothing of it on disk), and after the photos are settled
+ * (row 6).
+ */
+const PUSH_CELLS: ReadonlySet<string> = new Set(["4 OFF", "5b OFF", "6 OFF", "9a OFF"]);
+const cellKey = (cell: Cell): string => `${cell.boundary.id} ${cell.review ? "ON" : "OFF"}`;
+
+async function runCell({ boundary, review }: Cell): Promise<void> {
+  const halted = await within(boundary.halt({ review }), 150_000, "reaching the boundary");
+  const firstRequests = await kit.crash(halted.first, halted.nets);
+
+  const net2 = network();
+  const second = await kit.boot(net2, boundary.realRender === true ? realRender : fakeRender());
+  const paused = (await kit.getLaunch(second, halted.launchId)).launch;
+  expect(paused.status).toBe("paused");
+  expect(paused.resumeBlockedBy).toBe(boundary.expected.reconcile ? "reconcile-required" : null);
+  // A5: a restart makes no reserve and no render until «Продолжить».
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(net2.paidCalls()).toEqual([]);
+  expect(second.engine.renders.states()).toEqual([]);
+
+  const { accepted, before } = await kit.resumeLaunch(second, halted.launchId);
+  // Review ON, set not yet approved (rows 1 to 3): «Продолжить» brings the avatar back to the review wait and draws NOTHING until the owner continues. A restart that approved by itself
+  // would draw here, and the wait below would never see the phase or the images would not be empty.
+  if (review && ["1", "2", "3"].includes(boundary.id)) {
+    await kit.waitView(second, halted.launchId, "the review wait after «Продолжить»", (v) => v.avatars[0]?.phase === "awaiting-review", 60_000);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(net2.paidCalls()).toEqual([]);
-    expect(second.engine.renders.states()).toEqual([]);
+    expect((await kit.getLaunch(second, halted.launchId)).launch.avatars[0]?.phase).toBe("awaiting-review");
+    expect(net2.imageCalls()).toEqual([]);
+  }
+  await within(kit.driveToDone(second, halted.launchId), 200_000, "the resumed launch");
+  expect([net2.writerCalls().length, net2.imageCalls().length]).toEqual([boundary.expected.writer, boundary.expected.images]);
+  // A3, A2: no run's cap is above the draw allocation. A slice entry the first engine recorded with a cap far above what its 5 scenes cost (row 5a: 5 000 000) is lowered to today's cost,
+  // which for one slice of all 5 scenes is exactly the allocation; a resume that kept the old cap would show here.
+  const runs = ok(await kit.call(second, "runs.list", {}));
+  if (runs.type !== "runs.list") throw new Error("wrong answer");
+  const drawMicros = kit.fileOf(halted.launchId).avatars[0]?.allocation.drawMicros ?? 0;
+  for (const run of runs.result.runs) expect(run.capMicros).toBeLessThanOrEqual(drawMicros);
+  if (boundary.id === "5a") expect(runs.result.runs.map((r) => r.capMicros)).toEqual([drawMicros]);
+  await within(expectLaunchInvariants(kit, second, { launchId: halted.launchId, avatarId: halted.avatarId, firstRequests, net: net2, accepted, before, generates: halted.generates }), 60_000, "the invariants");
+}
 
-    const { accepted, before } = await kit.resumeLaunch(second, halted.launchId);
-    // Review ON, set not yet approved (rows 1 to 3): «Продолжить» brings the avatar back to the review wait and draws NOTHING until the owner continues. A restart that approved by itself
-    // would draw here, and the wait below would never see the phase or the images would not be empty.
-    if (review && ["1", "2", "3"].includes(boundary.id)) {
-      await kit.waitView(second, halted.launchId, "the review wait after «Продолжить»", (v) => v.avatars[0]?.phase === "awaiting-review", 60_000);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect((await kit.getLaunch(second, halted.launchId)).launch.avatars[0]?.phase).toBe("awaiting-review");
-      expect(net2.imageCalls()).toEqual([]);
-    }
-    await within(kit.driveToDone(second, halted.launchId), 200_000, "the resumed launch");
-    expect([net2.writerCalls().length, net2.imageCalls().length]).toEqual([boundary.expected.writer, boundary.expected.images]);
-    // A3, A2: no run's cap is above the draw allocation. A slice entry the first engine recorded with a cap far above what its 5 scenes cost (row 5a: 5 000 000) is lowered to today's cost,
-    // which for one slice of all 5 scenes is exactly the allocation; a resume that kept the old cap would show here.
-    const runs = ok(await kit.call(second, "runs.list", {}));
-    if (runs.type !== "runs.list") throw new Error("wrong answer");
-    const drawMicros = kit.fileOf(halted.launchId).avatars[0]?.allocation.drawMicros ?? 0;
-    for (const run of runs.result.runs) expect(run.capMicros).toBeLessThanOrEqual(drawMicros);
-    if (boundary.id === "5a") expect(runs.result.runs.map((r) => r.capMicros)).toEqual([drawMicros]);
-    await within(expectLaunchInvariants(kit, second, { launchId: halted.launchId, avatarId: halted.avatarId, firstRequests, net: net2, accepted, before, generates: halted.generates }), 60_000, "the invariants");
-  });
+describe("the crash matrix: a kill at each step boundary of plan §3.6, then «Продолжить»", () => {
+  const cells: Cell[] = BOUNDARIES.flatMap((b) => [true, false].map((review) => ({ label: `${b.name} · review ${review ? "ON" : "OFF"}`, boundary: b, review })));
+  for (const cell of cells) {
+    // A push cell also runs in the heavy run, so the heavy run walks the whole matrix.
+    if (PUSH_CELLS.has(cellKey(cell))) sweepTest(cell.label, { push: cell, heavy: cell }, runCell, 300_000);
+    else heavyTest(cell.label, () => runCell(cell), 300_000);
+  }
 });
 
 describe("the two ends of the matrix that need no table", () => {
-  test("row 0, estimate: it persists nothing, so a kill after it leaves nothing to recover and a fresh launch runs to done", async () => {
+  heavyTest("row 0, estimate: it persists nothing, so a kill after it leaves nothing to recover and a fresh launch runs to done", async () => {
     const avatarId = await kit.seedGeneratingAvatar();
     const net1 = network();
     const first = await kit.boot(net1, fakeRender());
@@ -405,7 +426,7 @@ describe("the two ends of the matrix that need no table", () => {
     await within(expectLaunchInvariants(kit, second, { launchId: launch.launchId, avatarId, firstRequests, net: net2, accepted: launch.plannedWorstMicros, before: launch, generates: true }), 60_000, "the invariants");
   });
 
-  test("a library-only launch killed with its render running spends nothing before or after: no request, no ledger line, and the video is made once", async () => {
+  heavyTest("a library-only launch killed with its render running spends nothing before or after: no request, no ledger line, and the video is made once", async () => {
     const avatarId = await kit.seedAvatar(10);
     const net1 = network();
     const first = await kit.boot(net1, fakeRender({ run: never }));
