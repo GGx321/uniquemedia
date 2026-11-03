@@ -5,8 +5,9 @@
 // youth words only, with the garment name «babydoll» exempt (banks/boldRules.ts); no revealing-word rule, no covering clause, so his own edits may say
 // «topless» or «naked». The exposure and explicit-act lists are bank design, swept by tests over the banks; they are never applied to a text here.
 // Which level a slot or a scene is at is `contentLevelOf` (S5.9c): the sites call it with the slot or the scene they check, so the gate follows the CATEGORY, not the mix level.
+// S5.BA9 r2 (AGE): at every level, the core age rule of the kept minor-age guard too (an explicit age under 18 or an under-21 bound, ageText.ts), told as a youth word.
 
-import { youthWords } from "../engine/ageText";
+import { ageMentions, ageUpperBounds, youthWords } from "../engine/ageText";
 import { isBoldFrame, type SceneLevel, type SceneRoute } from "../engine/categories";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
 import { revealingWordsIn } from "./words";
@@ -61,14 +62,24 @@ function isExemptGarment(word: string): boolean {
 }
 
 /**
+ * S5.BA9 r2 (AGE): the core age rule of the kept minor-age guard, on every text that reaches an image prompt: an explicit age under 18, or an under-21 bound, as ageText.ts's own readers find
+ * them (`ageMentions`, `ageUpperBounds`, in English or Russian, in digits or in words). Each once, as the number the rule read («sixteen» is «16»): what the refusal names.
+ */
+function minorAgesIn(text: string): string[] {
+  return [...new Set([...ageMentions(text).filter((age) => age < 18), ...ageUpperBounds(text).filter((bound) => bound <= 21)])].map(String);
+}
+
+/**
  * Every rule a text breaks at `level`, the youth words first. Empty when the text is fine at that level. At "ordinary" and "flirty" this is what
- * `sentenceProblems` always was; at "bold" only the youth words count, minus the exempt garment names.
+ * `sentenceProblems` always was; at "bold" only the youth words count, minus the exempt garment names. S5.BA9 r2 (AGE): at every level an explicit minor age or an under-21 bound
+ * (`minorAgesIn`) is a youth word too, named after the words, so every site that reads the line (the writers' readers, the owner's edit, the approval, the launch, the assembler's last
+ * gate, the mock) refuses it as it refuses one.
  */
 export function contentProblems(text: string, level: ContentLevel): ContentProblem[] {
   const problems: ContentProblem[] = [];
   const found = youthWords(text, "descriptor");
   const bold = level === BOLD;
-  const youth = bold ? found.filter((word) => !isExemptGarment(word)) : found;
+  const youth = [...(bold ? found.filter((word) => !isExemptGarment(word)) : found), ...minorAgesIn(text)];
   if (youth.length > 0) problems.push({ reason: "youth-word", words: youth });
   if (!bold) {
     const revealing = revealingWordsIn(text);

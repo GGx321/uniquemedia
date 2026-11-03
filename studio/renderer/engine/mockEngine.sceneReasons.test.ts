@@ -79,3 +79,22 @@ describe("an approval", () => {
   });
 
 });
+
+// S5.BA9 r2 (AGE): the mock reads the same content line as the engine (engine/scenes/minorAge.paths.test.ts), so an explicit minor age is refused in the owner's edit and at the approval.
+describe("an explicit minor age (S5.BA9 r2)", () => {
+  const MINOR = "She is 17 and sips coffee on her sunny balcony, one hand on the railing.";
+
+  test("the owner's edit of a scene: a youth-word problem naming the age, and nothing changed", async () => {
+    const m = makeMock();
+    const view = await ready(m);
+    const result = await unwrap(m.client.request("scenes.edit", { sceneSetId: view.sceneSetId, revision: view.revision, op: { op: "text", sceneId: 1, text: MINOR } }));
+    expect("problem" in result ? result.problem : null).toEqual({ reason: "youth-word", words: ["17"] });
+  });
+
+  test("the approval of an own scene stored with one: scene-text-problem, naming it", async () => {
+    const m = makeMock({
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 1, written: 1, scenes: [{ idea: "кофе на балконе", shot: "friend", pose: "front", text: MINOR }] }],
+    });
+    expect(await refusalOf(estimateRun(m, await setOf(m)))).toEqual(["VALIDATION", "scene-text-problem", 1]);
+  });
+});
