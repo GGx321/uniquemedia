@@ -83,9 +83,13 @@ export function waterHeadNoun(name: string): string {
   return (/([A-Za-z']+)\W*$/.exec(headPart)?.[1] ?? "").toLowerCase();
 }
 
-/** The head nouns of a water place (M8, r2.2 P7): «island», «surf», «river», «pier», «marina» and «deck» are left out. Round 2, L-4: the plural of each is a water noun too («secluded beaches»). Pinned (custom.test.ts). */
+/**
+ * The head nouns of a water place (M8, r2.2 P7): «island», «surf», «river», «pier», «marina» and «deck» are left out. Round 2, L-4: the plural of each is a water noun too («secluded
+ * beaches»). S5.BAR (review M2), the owner's «beach, sea, pool, lake, yacht → swimwear right there»: a boat of any kind (a sailboat, a catamaran, a houseboat), a cove, a bay, a coast
+ * and a lido are by the water too. Pinned (custom.test.ts).
+ */
 const WATER_NOUNS: ReadonlySet<string> = new Set(
-  ["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck"].flatMap((noun) => (noun.endsWith("ch") ? [noun, `${noun}es`] : [noun, `${noun}s`])),
+  ["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck", "boat", "sailboat", "catamaran", "houseboat", "cove", "bay", "coast", "lido"].flatMap((noun) => (noun.endsWith("ch") ? [noun, `${noun}es`] : [noun, `${noun}s`])),
 );
 
 /**
