@@ -6,6 +6,7 @@ import { useTempDir } from "../library/testing/helpers";
 import { writerAttemptWorstMicros, writerCallOf } from "../money/estimate";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
+import { BOLD_REASONING_EFFORT } from "../runs/writerPhase";
 import { POOLS, type PlanSlot } from "../scenes";
 import { categoryLabelOf } from "../scenes/categories";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
@@ -275,6 +276,26 @@ describe("an idea write is asked in its set's mode (S5.BA9)", () => {
     expect(reserves().length).toBeGreaterThan(0);
     for (const reserve of reserves()) expect(reserve).toBe(attempt);
     expect(estimate.worstMicros).toBe(plan.attemptsLeft * attempt);
+  });
+
+  // S5.BAR (money/state lane, LOW-1): the bold idea writer is sent at the bold scene writer's effort («none», P-BA's best: 18 of 25 clean, «low» 0); its reserve already prices the
+  // reasoning allowance, so it does not move. Below «Смелая» the idea request is the one it always was, at «low».
+  test("an own scene of a «Смелая» set is asked at the bold writer's reasoning effort «none», at the same 48 750", async () => {
+    await seed("bold");
+    await store.update(AVATAR, SET, idea);
+    const { net, end } = await run([lingerieAnswer]);
+    expect(await end).toMatchObject({ status: "done" });
+    expect(net.calls[0]?.json().reasoning).toEqual({ effort: BOLD_REASONING_EFFORT });
+    expect(BOLD_REASONING_EFFORT).toBe("none");
+    expect(reserves()).toEqual([48_750]);
+  });
+
+  test("an idea write at «Кокетливая» is asked at «low», every attempt", async () => {
+    await seed("flirty");
+    await store.update(AVATAR, SET, idea);
+    const { net, end } = await run([lingerieAnswer, lingerieAnswer]);
+    await end;
+    expect(net.calls.map((call) => call.json().reasoning)).toEqual([{ effort: "low" }, { effort: "low" }]);
   });
 
   test("at «Кокетливая»: the ordinary idea prompt byte for byte, today's 37 500, and lingerie still refused", async () => {

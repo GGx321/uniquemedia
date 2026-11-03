@@ -147,6 +147,11 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   textModel: string;
   /** CS.8a: the structured-output schema asked for; the compose schema (sentences only) when absent. An idea write asks for its own, with the angle the model picks. */
   jsonSchema?: { name: string; schema: Record<string, unknown> };
+  /**
+   * The reasoning effort of a chunk asked without the bold mode (`bold`, which names its own); absent: «low», what every writer request has always been sent at. S5.BAR (LOW-1): an own
+   * scene of a «Смелая» set is asked at `BOLD_REASONING_EFFORT`, as the bold scene writer is.
+   */
+  reasoningEffort?: ReasoningEffort;
   /** CS.8a: how an answer is read; the writer's own reader (sentences only) when absent. An idea write's reader also settles the angle of each scene it was asked to pick. */
   read?: (content: string, slots: readonly S[]) => PhaseRead;
   /**
