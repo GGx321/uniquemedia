@@ -160,8 +160,14 @@ describe("the bold variant's reader (S5.BA9)", () => {
     ["a sheet", "She lies in her bed with the white sheet pulled up to her chest, one hand under her cheek, smiling at the viewer."],
     ["bath foam", "She lies back in her bath under thick foam, one hand resting on the rim, smiling at the viewer."],
   ] as const;
+  /** S5.BA9 round 3: the review's own wordings of a frame she wears a cover alone in, still refused for an imported avatar. */
+  const COVER_ONLY_MORE = [
+    ["a towel (wrapped only in it)", "She stands by her bathroom mirror wrapped only in a white towel, smiling at the viewer."],
+    ["a sheet (only it, pulled up to her chest)", "She sits up in her bed in only a white sheet pulled up to her chest, smiling at the viewer."],
+    ["the sheets of her bed (under them)", "She dozes under the sheets of her hotel bed, one hand under her cheek, smiling at the viewer."],
+  ] as const;
 
-  test.each(COVER_ONLY)("an imported avatar's sentence covered by %s alone is refused for its scene (implied-cover), and the other scene is kept with its coverage", (_cover, sentence) => {
+  test.each([...COVER_ONLY, ...COVER_ONLY_MORE])("an imported avatar's sentence covered by %s alone is refused for its scene (implied-cover), and the other scene is kept with its coverage", (_cover, sentence) => {
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
     expect(read).toMatchObject({ ok: false, problems: ["implied-cover"], boldSlots: { "implied-cover": [5] } });
     if (read.ok) throw new Error("expected a refusal");
@@ -178,6 +184,69 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
   });
 
+  // S5.BA9 round 3 (review MEDIUM): a frame she wears a garment in is a lingerie frame whatever the garment's name (a lace set, a teddy, a cami and shorts, a nightie, a one-piece), and a
+  // towel or a sheet is the cover only when she is in it: one on her shoulders, under her on the bed or by the pool is a prop. Kept for an imported avatar, with the kept coverage, and
+  // given no cover sentence for an avatar made in Studio.
+  const PROP_FRAMES = [
+    ["a towel over her shoulders, then a lace set", "She steps out of the shower with a towel over her shoulders, in a black lace set, smiling at the viewer."],
+    ["a lace set, then a towel over her shoulders", "She sits on her bed in a black lace set, a towel over her shoulders, smiling at the viewer."],
+    ["a lace teddy on the sheets", "She lies on the white sheets of her hotel bed in a lace teddy, smiling at the viewer."],
+    ["a cami and shorts on the sheets", "She lies on the sheets of her bed in a cami and shorts, smiling at the viewer."],
+    ["a nightie, the sheets rumpled", "She sits on her bed in a white nightie, the sheets rumpled around her, smiling at the viewer."],
+    ["a one-piece on a towel by the pool", "She lies on a towel by the pool in a red one-piece, one hand shading her eyes."],
+  ] as const;
+
+  test.each(PROP_FRAMES)("an imported avatar's frame with %s is kept, with the kept coverage", (_frame, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
+  });
+
+  test.each(PROP_FRAMES)("an avatar made in Studio's frame with %s gets no cover sentence", (_frame, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)).toBe(sentence);
+  });
+
+  // S5.BA9 round 3 (review MEDIUM): she may be in a cover AND wear a garment the banks' lingerie and swimwear lists do not name; that is a lingerie frame too.
+  const DRESSED_UNDER_A_COVER = [
+    ["a lace teddy", "She dozes under the sheets of her hotel bed in a lace teddy, one hand under her cheek."],
+    ["a cami and shorts", "She lies under the white sheet in a cami and shorts, smiling at the viewer."],
+    ["a nightie", "She lies in her bed under the sheets in a white nightie, smiling at the viewer."],
+    ["a lace set", "She stands in her bathroom wrapped in a towel over a black lace set, smiling at the viewer."],
+    ["a one-piece", "She sits by the pool under a striped towel in a red one-piece, smiling at the viewer."],
+    ["a silk slip", "She lies under the white sheet in a silk slip, smiling at the viewer."],
+  ] as const;
+
+  test.each(DRESSED_UNDER_A_COVER)("in a cover and %s: kept for an imported avatar with the kept coverage, and no cover sentence for one made in Studio", (_garment, sentence) => {
+    const imported = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
+    expect(imported.ok && imported.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
+    const studio = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(studio.ok && studio.sentences.get(5)).toBe(sentence);
+  });
+
+  test("a sheet mask is no sheet she is under: kept for an imported avatar, and no cover sentence for one made in Studio", () => {
+    const sentence = "She relaxes in her bath under a sheet mask, smiling at the viewer.";
+    const imported = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
+    expect(imported.ok && imported.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
+    const studio = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(studio.ok && studio.sentences.get(5)).toBe(sentence);
+  });
+
+  test("her hair in a towel is no cover; the sheet she is wrapped in is, and an avatar made in Studio's frame ends with the sheet's sentence", () => {
+    const sentence = "She sits on her bed, her hair up in a towel, wrapped in the white sheet, smiling at the viewer.";
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${COVER.sheet}`);
+  });
+
+  // S5.BA9 round 3 (review L-a): the towel on the rack is a prop; the foam she lies under is what covers her.
+  test.each([
+    ["on the rack", "With a white towel on the rack behind her, she lies back under thick foam, smiling at the viewer."],
+    ["wrapped around her shoulders", "A towel wrapped around her shoulders, she lies back in her bath under thick foam, smiling at the viewer."],
+  ])("a towel %s and the foam she lies under: refused for an imported avatar, the foam's sentence for one made in Studio", (_towel, sentence) => {
+    expect(readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED)).toMatchObject({ ok: false, problems: ["implied-cover"] });
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${COVER.foam}`);
+  });
+
   // S5.BA9 r2 (review M2, I5.74, banks/schema.ts open-coverage: «an implied cover says what covers her to every avatar»): an avatar made in Studio may be covered by one alone, and the
   // sentence then ends with the bank's sentence of that cover, as the bank's own towel, sheet and foam moments end: the towel's open one, the sheet's and the foam's kept ones.
   const STUDIO_COVER = [
@@ -191,8 +260,8 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${coverage}`);
   });
 
-  test("an avatar made in Studio's sentence that names two covers ends with the sentence of the one it names first", () => {
-    const sentence = "She lies in her bed under the white sheet, a towel wrapped around her hair, smiling at the viewer.";
+  test("an avatar made in Studio's sentence that names two covers she is in ends with the sentence of the one it names first", () => {
+    const sentence = "She lies in her bed under the white sheet, wrapped in a soft towel, smiling at the viewer.";
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
     expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${COVER.sheet}`);
   });
