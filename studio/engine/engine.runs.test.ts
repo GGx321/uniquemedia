@@ -180,6 +180,26 @@ function resumeAnyway(runId: string): unknown {
   return command("runs.resume", { runId, acceptedWorstMicros: 10_000_000 });
 }
 
+/**
+ * The user's reconcile on a restarted engine, which must settle what the earlier process left open. A restarted engine walks the open library's clips folders in the
+ * background (S5.VR), and until that walk ends `money.reconcile` answers `too-early`: an ok answer that settles nothing, whatever the clocks say. A test that went on
+ * after such an answer read the run with its reserves still open (a loaded macOS runner: capExhausted false where the cap was used up, RECONCILE_REQUIRED where
+ * BUDGET_EXCEEDED was due). So this waits, as the window's banner does, until `money.status` names no later time for the reconcile, and then requires it done.
+ */
+async function reconciled(engine: Engine): Promise<void> {
+  const available = async (): Promise<boolean> => {
+    const status = ok(await engine.handle(command("money.status")));
+    return status.type === "money.status" && status.result.ledger === "open" && status.result.reconcileAvailableAt === undefined;
+  };
+  // Wall time, as `until` bounds its waits: a passing wait returns as soon as the walk has ended.
+  const deadline = Date.now() + 15_000;
+  while (!(await available())) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for the reconcile to be available (the restart's walk of the clips folders)");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(ok(await engine.handle(command("money.reconcile")))).toMatchObject({ type: "money.reconcile", result: { status: "done" } });
+}
+
 function started(response: Parameters<typeof ok>[0]): { runId: string; jobId: string } {
   const answer = ok(response);
   if (answer.type !== "runs.start" && answer.type !== "runs.resume") throw new Error(`expected a run answer, got ${answer.type}`);
@@ -1029,7 +1049,7 @@ describe("runs.resume", () => {
 
     expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RECONCILE_REQUIRED");
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
 
     const { jobId } = started(await resume(second.engine, runId));
     const end = await jobEnd(second.events, jobId);
@@ -1052,7 +1072,7 @@ describe("runs.resume", () => {
     const { avatarId, runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const reservesBefore = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
     await rm(join(dir(), "library", "avatars", avatarId, "avatar.json"));
 
@@ -1068,7 +1088,7 @@ describe("runs.resume", () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
 
     const { jobId } = started(await resume(second.engine, runId));
     await jobEnd(second.events, jobId);
@@ -1109,7 +1129,7 @@ describe("runs.resume", () => {
     const net2 = runNetwork({ received });
     const second = await engineOver(net2, { bootId: "boot-0000-bbbb", clock: () => LATER, monotonic: () => mono, monthlyBudgetMicros });
     mono += 10 * 60_000;
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const reserveIdsNow = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" ? [l.attemptId] : []));
     const before = reserveIdsNow();
 
@@ -1146,7 +1166,7 @@ describe("runs.resume", () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
 
     const { jobId } = started(await resume(second.engine, runId));
     await jobEnd(second.events, jobId);
@@ -1161,7 +1181,7 @@ describe("runs.resume", () => {
     await writeFile(join(dir(), "library", "runs", runId, "plan.json"), JSON.stringify(edited, null, 2));
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
 
     const { jobId } = started(await resume(second.engine, runId));
     await jobEnd(second.events, jobId);
@@ -1221,7 +1241,7 @@ describe("runs.resume", () => {
   async function restartedAndReconciled(received: string[]) {
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     return second;
   }
 
@@ -1258,7 +1278,7 @@ describe("runs.resume", () => {
     expect((await remainingWorst(second.engine, runId)).worstMicros).toBe(ONE_ATTEMPT - 1);
 
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true });
   });
 
@@ -1297,8 +1317,9 @@ describe("runs.resume", () => {
 
     await capLeaving(runId, -1);
     const third = await restarted(received);
-    third.advance(10 * 60_000);
-    ok(await third.engine.handle(command("money.reconcile")));
+    // The second engine's reconcile closed every reserve, so the third has none to reconcile (a reconcile here would only answer `too-early`: the ledger's last write
+    // is that reconcile, at the same frozen clock).
+    expect(ok(await third.engine.handle(command("money.status")))).toMatchObject({ result: { ledger: "open", reconcileNeeded: false, unsettledCount: 0 } });
     expect(summaryOf(await third.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, remainingWorstMicros: 0 });
   });
 
@@ -1307,7 +1328,7 @@ describe("runs.resume", () => {
     await capLeaving(runId, ONE_ATTEMPT - 1);
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const posts = second.net.calls.filter((c) => c.method === "POST").length;
     const ledger = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).length;
 
@@ -1327,7 +1348,7 @@ describe("runs.resume", () => {
 
     expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RECONCILE_REQUIRED");
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     expect(failed(await second.engine.handle(resumeAnyway("run-00000404"))).error.code).toBe("NOT_FOUND");
     expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RUN_CAP_EXCEEDED");
   });
@@ -1380,7 +1401,7 @@ describe("runs.resume", () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const status = ok(await second.engine.handle(command("money.status")));
     if (status.type !== "money.status" || status.result.ledger !== "open") throw new Error("expected an open ledger");
     const { worstMicros } = await remainingWorst(second.engine, runId);
@@ -1399,7 +1420,7 @@ describe("runs.resume", () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const status = ok(await second.engine.handle(command("money.status")));
     if (status.type !== "money.status" || status.result.ledger !== "open") throw new Error("expected an open ledger");
     const { worstMicros } = await remainingWorst(second.engine, runId);
@@ -1449,7 +1470,7 @@ describe("a run with the image age check on", () => {
     let mono = 0;
     const second = await engineOver(runNetwork(), { imageAgeCheck: "off", bootId: "boot-0000-bbbb", clock: () => NOW + 10 * 60_000, monotonic: () => mono });
     mono += 10 * 60_000;
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("AGE_GATE_UNAVAILABLE");
   });
 });
@@ -1489,7 +1510,7 @@ describe("a run with no face gate wired", () => {
     let mono = 0;
     const second = await engineOver(runNetwork(), { qaGates: null, bootId: "boot-0000-cccc", clock: () => NOW + 10 * 60_000, monotonic: () => mono });
     mono += 10 * 60_000;
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("FACE_GATE_UNAVAILABLE");
   });
 });
@@ -1535,7 +1556,7 @@ describe("a run once the face gate is broken", () => {
     const brokenFace: QaGate = { name: "face", paid: false, available: () => false, check: async () => ({ verdict: "pass" }) };
     const second = await engineOver(net2, { qaGates: [brokenFace], bootId: "boot-0000-dddd", clock: () => NOW + 10 * 60_000, monotonic: () => mono });
     mono += 10 * 60_000;
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
     const before = reserves();
 
@@ -2395,7 +2416,7 @@ describe("«Ножки» (S5.8a)", () => {
     const net = runNetwork({ received });
     const second = await engineOver(net, { bootId: "boot-0000-bbbb", clock: () => NOW + 10 * 60_000, monotonic: () => mono, network: 10 });
     mono += 10 * 60_000;
-    ok(await second.engine.handle(command("money.reconcile")));
+    await reconciled(second.engine);
     const { jobId: resumeJob } = started(await resume(second.engine, runId));
     const end = await jobEnd(second.events, resumeJob);
 
