@@ -6,7 +6,7 @@ import { writerCallOf } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { ideaJsonSchema, ideaMessages, ideaSystemPrompt, readIdeaAnswer, type IdeaSlot } from "./ideaWriter";
 import { plan } from "./planner";
-import { POSE_LABEL, SHOT_LABEL, writerMessages, type WriterRefusal } from "./writer";
+import { POSE_LABEL, SHOT_LABEL, writerMessages, writerRefusalText, type WriterRefusal } from "./writer";
 import type { Pose } from "./schema";
 import type { Shot } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -18,10 +18,11 @@ useNativeGlobals();
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 /**
- * The measured margin of the bold variant's honest worst (five 500-character CJK ideas, the worst refusal with the exposure reason) under WRITER_BOLD_CALL's 17 000, as built: its floor is
- * 14 401, over the ordinary 14 000 by 401, so the bold variant is priced and reserved as the bold writer call (S5.BA9).
+ * The measured margin of the bold variant's honest worst (five 500-character CJK ideas, the worst refusal with the exposure and the implied-cover reasons) under WRITER_BOLD_CALL's 17 000,
+ * as built: its floor is 14 506, over the ordinary 14 000 by 506, so the bold variant is priced and reserved as the bold writer call (S5.BA9; S5.BA9 r2 added the implied-cover reason,
+ * 2 599 before it).
  */
-const BOLD_IDEA_MARGIN = 2_599;
+const BOLD_IDEA_MARGIN = 2_494;
 const IMPORTED = { impliedNudity: false } as const;
 const STUDIO = { impliedNudity: true } as const;
 const ORDINARY_CLOTHING = "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.";
@@ -151,6 +152,36 @@ describe("the bold variant's reader (S5.BA9)", () => {
     expect(read.repair?.angles).toEqual(new Map([[6, { shot: "friend", pose: "three-quarter" }]]));
   });
 
+  // S5.BA9 r2 (review M1): «lingerie at most» is held in code for an imported avatar (or one of unknown origin), not by the prompt alone. A frame that only a towel, a sheet or bath foam
+  // covers is refused for its scene (`implied-cover`) and asked again once, as an exposure word is; a sentence that names lingerie or swimwear beside one is a lingerie frame.
+  const COVER_ONLY = [
+    ["a towel", "She sits on the edge of her bathtub wrapped in a white towel, one hand in her wet hair, smiling at the viewer."],
+    ["a sheet", "She lies in her bed with the white sheet pulled up to her chest, one hand under her cheek, smiling at the viewer."],
+    ["bath foam", "She lies back in her bath under thick foam, one hand resting on the rim, smiling at the viewer."],
+  ] as const;
+
+  test.each(COVER_ONLY)("an imported avatar's sentence covered by %s alone is refused for its scene (implied-cover), and the other scene is kept with its coverage", (_cover, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, IMPORTED);
+    expect(read).toMatchObject({ ok: false, problems: ["implied-cover"], boldSlots: { "implied-cover": [5] } });
+    if (read.ok) throw new Error("expected a refusal");
+    expect(read.repair?.marked).toEqual([5]);
+    expect(read.repair?.accepted).toEqual(new Map([[6, `${GOOD_SECOND.sentence} ${OWN_BOLD_COVERAGE}`]]));
+  });
+
+  test.each([
+    ["lingerie", "She stands in her bathroom in a white lace bra and panties, a towel over her shoulder, smiling at the viewer."],
+    ["swimwear", "She lies on a striped towel by the pool in a black bikini, one hand shading her eyes."],
+    ["a nightdress", "She sits on her bed in a short nightdress, the sheet bunched at her feet, smiling at the viewer."],
+  ])("an imported avatar's sentence that names %s beside the cover is a lingerie frame: kept, with the kept coverage", (_garment, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, IMPORTED);
+    expect(read.ok && read.sentences.get(5)).toBe(`${sentence} ${OWN_BOLD_COVERAGE}`);
+  });
+
+  test.each(COVER_ONLY)("an avatar made in Studio may be covered by %s alone: the sentence is kept", (_cover, sentence) => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence, shot: "friend", pose: "front" }), [IDEA], false, STUDIO);
+    expect(read.ok && read.sentences.get(5)?.startsWith(sentence)).toBe(true);
+  });
+
   test("a youth word still refuses the whole answer, as at every level (the age guard is unchanged)", () => {
     const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "A teenage girl lies on a bed in a lace bra.", shot: "friend", pose: "front" }, GOOD_SECOND), [IDEA, SECOND], false, STUDIO);
     expect(read).toMatchObject({ ok: false, problems: ["youth-word"] });
@@ -177,17 +208,25 @@ describe("the bold variant's floor (S5.BA9): it is priced as the bold writer cal
     return [`${"W".repeat(12)}${n}`, `${"Я".repeat(6)}${n}`, `${"😀".repeat(3)}${n}`, `${"é".repeat(6)}${n}`];
   }).flat();
   const IDEA_IDS = [9_992, 9_994, 9_996, 9_998, 10_000];
-  /** The ordinary worst refusal, plus the one problem only the bold variant raises (an exposure word), naming every scene. */
+  /** The ordinary worst refusal, plus the two problems only the bold variant raises (an exposure word, and S5.BA9 r2 an imported avatar's implied cover), naming every scene. */
   const worstRefusal = (indices: readonly number[]): WriterRefusal => ({
-    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie", "bad-angle", "exposure-word"],
+    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie", "bad-angle", "exposure-word", "implied-cover"],
     missingSlots: [...indices],
     twoHandedSlots: [...indices],
     wordSlots: [...indices],
     poseSlots: [...indices],
     angleSlots: [...indices],
     phoneSlots: [...indices],
-    boldSlots: { "exposure-word": [...indices] },
+    boldSlots: { "exposure-word": [...indices], "implied-cover": [...indices] },
     words: hostileWords,
+  });
+
+  test("the worst refusal tells every reason the bold variant can raise, each with its scenes", () => {
+    const text = writerRefusalText(worstRefusal(IDEA_IDS));
+    for (const problem of ["exposure-word", "implied-cover"] as const) {
+      expect(text).toContain(writerRefusalText({ problems: [problem], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], boldSlots: { [problem]: [...IDEA_IDS] } }));
+      expect(text).not.toContain(`; ${problem}`);
+    }
   });
 
   /** The dearest bold write for `idea`, by the ordinary floor's own walk: every shot against every pose, with and without the mirror, as a rewrite and on «Авто», for both origins. */

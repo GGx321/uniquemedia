@@ -209,6 +209,40 @@ describe("an idea write is asked in its set's mode (S5.BA9)", () => {
     expect(await ownText()).toBe(LINGERIE);
   });
 
+  // S5.BA9 r2 (review M1): an imported avatar's own scene (or one of unknown origin, the fail-closed side) that only a towel covers is refused in code, asked again once, then left
+  // unwritten (no plain sentence: an idea has no place to build one from); its scene in lingerie is kept. An avatar made in Studio keeps both.
+  const TOWEL = "She sits on the edge of her bathtub wrapped in a white towel, one hand in her wet hair, smiling at the viewer.";
+  const towelFor5: Step = (call: FetchCall): Reply => ({
+    status: 200,
+    body: chatBody(JSON.stringify({ scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: s.slotIndex === 5 ? TOWEL : LINGERIE, pose: "front" })) }), { cost: 0.004 }),
+  });
+  const twoScenes = (s: StoredSceneSet) =>
+    beginIdea(s, { jobId: "job-aaaa-0002", idea: "в полотенце после душа", count: 2, shot: "friend", mirrorAllowed: false, scenes: [{ sceneId: 5, shot: "friend", pose: "front" }, { sceneId: 6, shot: "friend", pose: "front" }] });
+
+  test.each([
+    ["an imported avatar", false],
+    ["an avatar of unknown origin", undefined],
+  ] as const)("%s's own scene in a towel alone is asked again once, then stays unwritten; the other is kept", async (_name, impliedNudity) => {
+    await seed("bold");
+    await store.update(AVATAR, SET, twoScenes);
+    const { net, end } = await run([towelFor5, towelFor5], impliedNudity);
+    expect(await end).toEqual({ status: "done", written: 1, unwritten: 1 });
+    expect(net.calls.map((call) => askedIn(call).map((s) => s.slotIndex))).toEqual([[5, 6], [5]]);
+    expect(reserves()).toEqual([48_750, 48_750]);
+    const scenes = (await setNow()).scenes;
+    expect(scenes.some((s) => s.sceneId === 5)).toBe(false);
+    expect(scenes.find((s) => s.sceneId === 6)?.text).toBe(`${LINGERIE} ${OWN_BOLD_COVERAGE}`);
+  });
+
+  test("an avatar made in Studio's own scene in a towel alone is kept at the first answer", async () => {
+    await seed("bold");
+    await store.update(AVATAR, SET, twoScenes);
+    const { net, end } = await run([towelFor5], true);
+    expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+    expect(net.calls.length).toBe(1);
+    expect((await setNow()).scenes.find((s) => s.sceneId === 5)?.text?.startsWith(TOWEL)).toBe(true);
+  });
+
   test("a rewrite of an own scene of a «Смелая» set: the bold variant at the bold call too", async () => {
     await seed("bold");
     await store.update(AVATAR, SET, idea);

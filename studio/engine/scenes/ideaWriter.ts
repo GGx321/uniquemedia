@@ -264,8 +264,9 @@ export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirr
     return { slotIndex: slot.slotIndex, shot: angle.shot, pose: angle.pose };
   });
 
-  // 5a.4 (S5.BA9): the bold variant's answer is read at the «Смелая» content line, with its exposure words, and every sentence it accepts ends with the coverage of the avatar's origin.
-  const read = covered(bold === undefined ? readWriterScenes(parsed.data.scenes, readable) : readOwnBoldScenes(parsed.data.scenes, readable), bold);
+  // 5a.4 (S5.BA9): the bold variant's answer is read at the «Смелая» content line, with its exposure words and (r2) the implied covers an imported avatar may not wear, and every
+  // sentence it accepts ends with the coverage of the avatar's origin.
+  const read = covered(bold === undefined ? readWriterScenes(parsed.data.scenes, readable) : readOwnBoldScenes(parsed.data.scenes, readable, bold.impliedNudity), bold);
   if (read.ok && angleSlots.length === 0) return { ok: true, sentences: read.sentences, angles };
   const { repair: sentenceRepair, ...refusal }: WriterRefusal & { repair?: SlotRepair } = read.ok
     ? { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] }

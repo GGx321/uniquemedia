@@ -5,6 +5,7 @@ import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
+import { namesImpliedCover } from "../../shared/scenes/ownScene";
 import { slotCoverageOf } from "../../shared/scenes/template";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate, type WriterMode } from "../money/estimate";
@@ -304,7 +305,13 @@ export type WriterProblem =
  * - `bare-place` (S5.BA4c, P-BW2 and P-BW3): the sentence opens with the slot's place and no preposition («Her balcony she …», «A lounger by the water she …»).
  */
 export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place"] as const;
-export type BoldProblem = (typeof BOLD_PROBLEMS)[number];
+/**
+ * S5.BA9 r2 (review M1): what only the idea writer's «Смелая» variant raises beside `exposure-word` (`readOwnBoldScenes`; never the compose writer's bold reader, so its floor pin
+ * leaves it out), of its scene, asked again once like the others:
+ * - `implied-cover`: an imported avatar's sentence, or one of unknown origin, that only a towel, a sheet or bath foam covers (`namesImpliedCover`): «lingerie at most» (I5.74, §5.6).
+ */
+export const OWN_BOLD_PROBLEMS = ["implied-cover"] as const;
+export type BoldProblem = (typeof BOLD_PROBLEMS)[number] | (typeof OWN_BOLD_PROBLEMS)[number];
 /** The two bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
 export type WordedBoldProblem = "label-word" | "public-place" | "bare-place";
 /** What the bold reader finds in one slot's sentence: a problem, with the words it found for the two that name them. */
@@ -416,6 +423,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   // S5.BA4b (P-BW): where the outfit goes, the order rule's own words.
   "outfit-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["outfit-missing"] ?? [])} left out the outfit: write "wearing" and then the outfit word for word right after the activity`,
   "exposure-word": (r) => `slot(s) ${slotList(r.boldSlots?.["exposure-word"] ?? [])} named nudity: describe only what the outfit shows`,
+  "implied-cover": (r) => `slot(s) ${slotList(r.boldSlots?.["implied-cover"] ?? [])} left her in only a towel, a sheet or bath foam: dress her in lingerie`,
   "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
   "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
   "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
@@ -960,17 +968,24 @@ export function boldReader(impliedNudity = false): (content: string, slots: read
 /** 5a.4 (S5.BA9): the content level an own scene of a «Смелая» set is held to: its marker's, an own scene on the Seedream route (`contentLevelOf`). */
 const OWN_BOLD_LEVEL: ContentLevel = contentLevelOf({ category: "own", level: undefined, route: "seedream" });
 
-/** 5a.4 (S5.BA9, I5.76): what only the idea writer's «Смелая» variant refuses: an exposure word, which Seedream refuses to draw (its idea names no outfit to exempt one). */
-function ownBoldProblemsOf(_slot: ReadableSlot, sentence: string): BoldFinding[] {
-  return exposureWordsIn(sentence).length > 0 ? ["exposure-word"] : [];
+/**
+ * 5a.4 (S5.BA9, I5.76): what only the idea writer's «Смелая» variant refuses: an exposure word, which Seedream refuses to draw (its idea names no outfit to exempt one). S5.BA9 r2 (review
+ * M1, I5.74): and, for an imported avatar or one of unknown origin (`impliedNudity` false), a frame that only a towel, a sheet or bath foam covers.
+ */
+function ownBoldProblemsOf(impliedNudity: boolean): (slot: ReadableSlot, sentence: string) => BoldFinding[] {
+  return (_slot, sentence) => [
+    ...(exposureWordsIn(sentence).length > 0 ? (["exposure-word"] as const) : []),
+    ...(!impliedNudity && namesImpliedCover(sentence) ? (["implied-cover"] as const) : []),
+  ];
 }
 
 /**
  * 5a.4 (S5.BA9, plan s5a4 §8 BA9): the answer's scenes of an own scene of a «Смелая» set (the idea writer's bold variant, ideaWriter.ts). Today's rules, each sentence held to the
  * «Смелая» content line (the youth words alone, the garment names exempt; the owner's denim ban stays), and an exposure word refused for its scene as the bold compose reader refuses it.
+ * S5.BA9 r2: `impliedNudity` is the avatar's origin (false for an imported avatar or one of unknown origin): only one made in Studio may be covered by a towel, a sheet or foam alone.
  */
-export function readOwnBoldScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[]): WriterAnswer {
-  return readScenes(scenes, slots, ownBoldProblemsOf, () => OWN_BOLD_LEVEL);
+export function readOwnBoldScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[], impliedNudity: boolean): WriterAnswer {
+  return readScenes(scenes, slots, ownBoldProblemsOf(impliedNudity), () => OWN_BOLD_LEVEL);
 }
 
 /** The sentence with its closing full stop (a sentence the model ended without one), so the coverage reads as the next sentence. */
