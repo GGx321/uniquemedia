@@ -70,6 +70,14 @@ export function hasWaterPlace(custom: CategorySummary): boolean {
   return custom.pool.locations.some((place) => isWaterPlaceName(place.name));
 }
 
+/**
+ * S5.BAR (review L2): whether every place of a custom category is by the water. The planner then draws all its «Смелая» frames from the water bank (`planCustomBold`: w = n when W = P), none
+ * from the rooms: swimwear by the water, no room, no lingerie and no cover to speak of.
+ */
+export function onlyWaterPlaces(custom: CategorySummary): boolean {
+  return custom.pool.locations.length > 0 && custom.pool.locations.every((place) => isWaterPlaceName(place.name));
+}
+
 const isSatin = (text: string): boolean => /\bsatin\b/i.test(text);
 
 /** What a bank says of itself, read from its data: the underwear and the satin of its general draw, the satin of its legs frames, and its water places. */
@@ -107,6 +115,11 @@ export function captionWordsOf(categories: readonly CategoryRef[], context: { le
     }
     const custom = context.customs.find((c) => c.categoryId === ref);
     if (custom === undefined) continue;
+    // As «Пляж и бассейн»: its places are the water, which the clothing says («купальник у воды»), so it adds no place word.
+    if (onlyWaterPlaces(custom)) {
+      take(banks.water, false);
+      continue;
+    }
     take(banks.rooms, false);
     for (const place of CUSTOM_PLACES) places.add(place);
     if (hasWaterPlace(custom)) {
@@ -149,13 +162,14 @@ export function impliedText(items: readonly ImpliedWord[]): string | null {
 
 /**
  * Whether any of the chosen `categories` draws lingerie or an implied cover, from the bank data: what an imported avatar's line («без простыни, полотенца и пены; в промпте бельё плотное»)
- * has something to say about. A custom category the library holds has its «rooms» bank, so it does; one it does not hold (not loaded yet, deleted) has no words, as in `captionWordsOf`;
- * «Пляж и бассейн» alone does not (r2.3 L1, r2.4 N2).
+ * has something to say about. A custom category the library holds has its «rooms» bank, so it does, unless all its places are by the water (S5.BAR, review L2: then its water bank's words
+ * decide, as «Пляж и бассейн»'s do); one it does not hold (not loaded yet, deleted) has no words, as in `captionWordsOf`; «Пляж и бассейн» alone does not (r2.3 L1, r2.4 N2).
  */
 export function drawsLingerie(categories: readonly CategoryRef[], customs: readonly CategorySummary[], banks: CaptionBanks = SHIPPED_CAPTION_BANKS): boolean {
+  const speaksOf = (bank: CategoryBank): boolean => wordsOfBank(bank).underwear || impliedItemsOf(bank).length > 0;
   return categories.some((ref) => {
-    if (isCustomCategory(ref)) return customs.some((c) => c.categoryId === ref);
-    const bank = banks.builtIn[ref];
-    return wordsOfBank(bank).underwear || impliedItemsOf(bank).length > 0;
+    if (!isCustomCategory(ref)) return speaksOf(banks.builtIn[ref]);
+    const custom = customs.find((c) => c.categoryId === ref);
+    return custom !== undefined && speaksOf(onlyWaterPlaces(custom) ? banks.water : banks.rooms);
   });
 }

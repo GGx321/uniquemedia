@@ -96,6 +96,17 @@ describe("the chip hint line at «Смелая» (mockup 65c)", () => {
     expect(line()).toBe("У бассейна — в белье в номере или дома, в мире категории; у воды — в купальнике.");
   });
 
+  // S5.BAR (review L2): a custom category all by the water plans no room and no lingerie, so its hint names neither.
+  test("a custom category whose places are all by the water: swimwear at the water, no lingerie in a room", async () => {
+    const SEA = category(8, "Море", { ...PARIS_POOL, locations: PARIS_POOL.locations.map((place, i) => ({ ...place, name: ["hotel pool", "a sandy cove", "the bay at sunset", "a quiet beach", "the lake shore", "a sailing boat"][i] ?? "the sea" })) });
+    await openPhotos({ categories: [SEA] });
+    await within(chipsGroup()).findByRole("button", { name: /^Море/ });
+    await pickLevel("Смелая");
+    fireEvent.focus(chip(/^Море/));
+    expect(line()).toContain("в купальнике");
+    expect(line()).not.toContain("в белье");
+  });
+
   test("back at «Обычная» the chips say what they always said; Фитнес and a custom chip leave Гламур's line", async () => {
     await openPhotos({ categories: [PARIS] });
     await within(chipsGroup()).findByRole("button", { name: /^Кофейни Парижа/ });

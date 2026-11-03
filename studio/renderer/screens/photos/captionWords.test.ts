@@ -14,6 +14,9 @@ const [firstPlace] = PARIS_POOL.locations;
 if (firstPlace === undefined) throw new Error("the fixture pool has no place");
 const POOL_BY_THE_WATER = category(2, "У бассейна", { ...PARIS_POOL, locations: [...PARIS_POOL.locations.slice(0, 5), { ...firstPlace, name: "hotel pool" }] });
 const BED = category(3, "Постель", BED_POOL);
+/** S5.BAR (review L2): every place by the water, so the planner draws all its «Смелая» frames from the water bank (swimwear), none from the rooms. */
+const WATER_NAMES = ["hotel pool", "a sandy cove", "the bay at sunset", "a quiet beach", "the lake shore", "a sailing boat"] as const;
+const ALL_BY_THE_WATER = category(4, "Море", { ...PARIS_POOL, locations: PARIS_POOL.locations.map((place, i) => ({ ...place, name: WATER_NAMES[i] ?? "the sea" })) });
 
 const wordsOf = (categories: readonly CategoryRef[], legs: LegsShare = 0, customs = [PARIS, POOL_BY_THE_WATER, BED]) => captionWordsOf(categories, { legs, customs });
 
@@ -34,6 +37,11 @@ describe("the clothing, the places and the cover items of one category (§5.9 ta
 
   test("a custom category: underwear, in a room or at home, with the sheet and the towel", () => {
     expect(wordsOf([PARIS.categoryId])).toMatchObject({ clothing: ["underwear"], places: ["home", "room"], implied: ["sheet", "towel"] });
+  });
+
+  // S5.BAR (review L2): as «Пляж и бассейн»: the clothing says «у воды», so no place word, and no room, lingerie or cover the rooms bank would add.
+  test("a custom category whose places are all by the water: swimwear at the water only, no room, no lingerie, no cover item", () => {
+    expect(wordsOf([ALL_BY_THE_WATER.categoryId], 0, [ALL_BY_THE_WATER])).toEqual({ clothing: ["swim"], places: [], implied: [] });
   });
 
   test("a custom category with a water place adds the swimwear and «у воды» (the planner's isWaterPlaceName)", () => {
@@ -129,8 +137,10 @@ describe("drawsLingerie: whether a chosen category has lingerie or a cover to sa
     ["«Пляж и бассейн» beside «Улица»", ["beach", "shoot"], true],
     ["«Пляж и бассейн» beside a custom category", ["beach", PARIS.categoryId], true],
     ["«Пляж и бассейн» beside a custom category that is gone", ["beach", "cat-gone-for-good"], false],
+    ["S5.BAR (review L2): a custom category whose places are all by the water", [ALL_BY_THE_WATER.categoryId], false],
+    ["S5.BAR (review L2): a custom category all by the water beside one with rooms", [ALL_BY_THE_WATER.categoryId, PARIS.categoryId], true],
   ])("%s", (_name, categories, expected) => {
-    expect(drawsLingerie(categories, [PARIS, POOL_BY_THE_WATER, BED])).toBe(expected);
+    expect(drawsLingerie(categories, [PARIS, POOL_BY_THE_WATER, BED, ALL_BY_THE_WATER])).toBe(expected);
   });
 });
 

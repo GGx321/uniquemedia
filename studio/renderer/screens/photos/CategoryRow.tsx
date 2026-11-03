@@ -3,7 +3,7 @@ import { BOLD_CATEGORIES, isBoldCategory, isCustomCategory, MAX_CUSTOM_CATEGORIE
 import type { CategoryCall, CategoryList, CategoryOutcome } from "../../engine/categoryLibrary";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
-import { hasWaterPlace } from "./captionWords";
+import { hasWaterPlace, onlyWaterPlaces } from "./captionWords";
 import { libraryHeld } from "./categoryText";
 import { BOLD_ONLY, gatedNote } from "./level";
 import { CATEGORY_LABEL, type RunCategory } from "./runForm";
@@ -44,8 +44,12 @@ const BOLD_CHIP_HINT: Partial<Record<RunCategory, string>> = {
   beach: BEACH_HINT,
 };
 
-/** A custom chip at «Смелая» (§5.9 row 14): lingerie in a room or at home, in the category's world; swimwear at the water when it has a water place (the planner's own rule). */
+/**
+ * A custom chip at «Смелая» (§5.9 row 14): lingerie in a room or at home, in the category's world; swimwear at the water when it has a water place (the planner's own rule). S5.BAR (review
+ * L2): swimwear at the water alone when all its places are by the water, as the planner draws it.
+ */
 function customBoldHint(custom: CategorySummary): string {
+  if (onlyWaterPlaces(custom)) return `${custom.name} — в купальнике у воды, в мире категории.`;
   return `${custom.name} — в белье в номере или дома, в мире категории${hasWaterPlace(custom) ? "; у воды — в купальнике" : ""}.`;
 }
 
