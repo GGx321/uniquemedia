@@ -6,7 +6,7 @@ import type { Scope } from "../money/ledger";
 import type { WriterMode } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import { localSentences } from "../scenes/localSentences";
-import { plannedWriterConfig, runWriterPhase, writerCallShape, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
+import { BOLD_REASONING_EFFORT, plannedWriterConfig, runWriterPhase, writerCallShape, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
 import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk, type IdeaBold } from "../scenes/ideaWriter";
 import { writerModeOf } from "../scenes/writer";
@@ -193,12 +193,14 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     result = await runWriterPhase(phaseDeps, phase);
   } else {
     // 5a.4 (S5.BA9, plan s5a4 §8 BA9): an own scene of a «Смелая» set is written by the idea writer's bold variant, for the avatar's origin (I5.74: false when unknown, the fail-closed
-    // side), and asked, priced and reserved as the bold call (`writeModeOf`, so the estimate and the reserve agree); any other idea write is the one it always was.
+    // side), and asked, priced and reserved as the bold call (`writeModeOf`, so the estimate and the reserve agree); any other idea write is the one it always was. S5.BAR (LOW-1): and
+    // sent at the bold scene writer's reasoning effort (P-BA: «none» 18 of 25 clean, «low» 0); the bold call's reserve already prices the reasoning allowance.
     const mode = ideaModeOf(set);
     const bold: IdeaBold | undefined = mode === "bold" ? { impliedNudity: deps.impliedNudity === true } : undefined;
     const phase: WriterPhase<IdeaAsk> = {
       ...base,
       call: writerCallShape(mode),
+      ...(mode === "bold" ? { reasoningEffort: BOLD_REASONING_EFFORT } : {}),
       slots: asked.slots,
       // S5.6d: an idea (and an own scene) has no place or moment to build a plain sentence from: what the last attempt refused stays unwritten, and the scenes
       // the write accepted are kept.
