@@ -1,4 +1,5 @@
 import { isCustomCategory, type CategoryRef, type SceneComposeTally, type SceneInterruptedIdea, type SceneLiveWrite, type SceneRewriteInterrupted, type SceneSetView, type SceneView } from "../../shared/engine";
+import { ownSceneRouteOf } from "../../shared/scenes/ownScene";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { LedgerView } from "../runs/journal";
 import { categoryRefOf } from "../scenes";
@@ -54,6 +55,8 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
     const marker = interrupted.get(scene.sceneId);
     const mark = marker === undefined ? {} : { rewriteInterrupted: marker };
     if (scene.origin === "own") {
+      // 5a.4 (S5.BA9 r2, review L1): the route it is drawn on (`ownSceneRouteOf`, the one its run slot carries), shown as a planned scene's is.
+      const route = ownSceneRouteOf(set.request.level);
       return {
         sceneId: scene.sceneId,
         origin: "own",
@@ -61,6 +64,7 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
         categoryName: null,
         shot: scene.shot,
         pose: scene.pose,
+        ...(route === undefined ? {} : { route }),
         place: null,
         idea: scene.idea,
         text: scene.text,

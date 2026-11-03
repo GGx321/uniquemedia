@@ -180,7 +180,7 @@ interface Scene {
   pose: SceneView["pose"];
   /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty; 5a.3: a «Смелая» category's scene of a bold set may be bold. */
   level?: "flirty" | "bold";
-  /** 5a.3: the scene is drawn on Seedream, exactly when its moment or its outfit is. 5a.4 (S5.BA9): an own scene of a «Смелая» set is too (the engine's `ownSceneRouteOf`; never shown). */
+  /** 5a.3: the scene is drawn on Seedream, exactly when its moment or its outfit is. 5a.4 (S5.BA9): an own scene of a «Смелая» set is too (the engine's `ownSceneRouteOf`), and its view says so (r2). */
   route?: "seedream";
   /** «Ножки» (S5.8a): a legs scene. */
   framing?: "legs";
@@ -1004,6 +1004,8 @@ export class MockSceneSets {
           categoryName: null,
           shot: scene.shot,
           pose: scene.pose,
+          // 5a.4 (S5.BA9 r2, review L1): the route it is drawn on, as the engine's view shows it.
+          ...(scene.route === undefined ? {} : { route: scene.route }),
           place: null,
           idea: scene.idea,
           text: scene.text,
