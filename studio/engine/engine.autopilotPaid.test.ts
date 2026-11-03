@@ -16,6 +16,7 @@ import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
 import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { command, engineSettings, failed, GOOD, ledgerLines, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger, NOW } from "./testing/engineHarness";
+import { heavyTest, sweepTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -442,7 +443,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     return { avatarId, launch, first };
   }
 
-  test("row 2, before the set was written: the compose is made again under the same ids, once", async () => {
+  heavyTest("row 2, before the set was written: the compose is made again under the same ids, once", async () => {
     const { avatarId, launch } = await startedOnly();
     const { sceneSetId, setRunId } = generationOf(launch.launchId);
     const net = network();
@@ -454,7 +455,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(reserves()).toEqual([`${sceneSetId}:writer-1#1`]);
   });
 
-  test("row 2, the set written and the answer lost: the launch's own «Дописать» takes the next unused attempt id, never the sent one", async () => {
+  sweepTest("row 2, the set written and the answer lost: the launch's own «Дописать» takes the next unused attempt id, never the sent one", { push: null, heavy: null }, async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId } = generationOf(launch.launchId);
     // The chunk's answer was lost: the sentences are not in the set, the first attempt is settled in the ledger.
@@ -470,7 +471,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(committed).toBeLessThanOrEqual(launch.plannedWorstMicros);
   });
 
-  test("row 2, the set file lost but the ledger holds its reserves: the avatar is skipped as set-unreadable, nothing is sent, and no id is reused (§18 item 8)", async () => {
+  heavyTest("row 2, the set file lost but the ledger holds its reserves: the avatar is skipped as set-unreadable, nothing is sent, and no id is reused (§18 item 8)", async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId } = generationOf(launch.launchId);
     await kill(first);
@@ -485,7 +486,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(reserves().filter((id) => id === `${sceneSetId}:writer-1#1`)).toHaveLength(1);
   });
 
-  test("row 3, review OFF, the set composed and the approval not made: after «Продолжить» it is approved and drawn, and no second compose is sent", async () => {
+  heavyTest("row 3, review OFF, the set composed and the approval not made: after «Продолжить» it is approved and drawn, and no second compose is sent", async () => {
     const avatarId = await seedAvatar();
     const first = await boot(network(), { steps: false });
     const launch = await startLaunch(first, draftOf([avatarId]));
@@ -509,7 +510,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(reserves().filter((id) => id.startsWith(`${sceneSetId}:writer-`))).toEqual([`${sceneSetId}:writer-1#1`]);
   });
 
-  test("row 4, the approval recorded and no slice entry: the first slice is drawn under the set's run id", async () => {
+  sweepTest("row 4, the approval recorded and no slice entry: the first slice is drawn under the set's run id", { push: null, heavy: null }, async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId, setRunId } = generationOf(launch.launchId);
     const revision = (await setOf(first, avatarId, sceneSetId))?.revision ?? 0;
@@ -523,7 +524,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(net.imageCalls()).toHaveLength(3);
   });
 
-  test("row 5, a slice entry without a run folder: the run is made once, under the entry's id", async () => {
+  heavyTest("row 5, a slice entry without a run folder: the run is made once, under the entry's id", async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId, setRunId } = generationOf(launch.launchId);
     const revision = (await setOf(first, avatarId, sceneSetId))?.revision ?? 0;
@@ -542,7 +543,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(net.imageCalls()).toHaveLength(3);
   });
 
-  test("row 5, an entry whose cap is below what its scenes cost now: the slice shrinks to the cap and the rest is drawn by the next slice, within the draw allocation (A2, A3)", async () => {
+  heavyTest("row 5, an entry whose cap is below what its scenes cost now: the slice shrinks to the cap and the rest is drawn by the next slice, within the draw allocation (A2, A3)", async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId, setRunId } = generationOf(launch.launchId);
     const revision = (await setOf(first, avatarId, sceneSetId))?.revision ?? 0;
@@ -565,7 +566,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     expect(net.imageCalls()).toHaveLength(3);
   });
 
-  test("row 5, a slice run made and never started: it is started once, inside its own cap, with no second run", async () => {
+  heavyTest("row 5, a slice run made and never started: it is started once, inside its own cap, with no second run", async () => {
     const { avatarId, launch, first } = await composedThenKilled();
     const { sceneSetId, setRunId } = generationOf(launch.launchId);
     const revision = (await setOf(first, avatarId, sceneSetId))?.revision ?? 0;
