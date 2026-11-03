@@ -168,10 +168,15 @@ describe("a rewrite of planned scenes is asked in their mode", () => {
 
   // 2026-10-28, S5.BA9 (plan s5a4 §8 BA9, Q-F → 1): this row pinned «the idea writer has no bold mode in this slice». BA9 gives it one, so an idea write on a «Смелая» set is now
   // asked in the bold variant at the bold call (the rows below); what it pinned of the compose prompt still holds: the idea write never sends the compose writer's bold prompt.
+  // S5.BAR (review M1): the bold variant dresses her (an imported avatar's frame in no garment is refused), so its answer names one.
+  const boldIdeaAnswer: Step = (call: FetchCall): Reply => ({
+    status: 200,
+    body: chatBody(JSON.stringify({ scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: "She sips coffee on a sunny balcony in a silk robe over a lace set, a cup in her free hand.", pose: "front" })) }), { cost: 0.004 }),
+  });
   test("an idea write on a «Смелая» set never sends the compose writer's bold prompt", async () => {
     await seed("bold");
     await store.update(AVATAR, SET, (s) => beginIdea(s, { jobId: "job-aaaa-0002", idea: "кофе на балконе утром", count: 1, shot: "friend", mirrorAllowed: false, scenes: [{ sceneId: 5, shot: "friend", pose: "front" }] }));
-    const { net, end } = await run([ideaAnswer]);
+    const { net, end } = await run([boldIdeaAnswer]);
     expect(await end).toMatchObject({ status: "done" });
     expect(systemOf(net.calls[0])).not.toBe(writerBoldMessages([])[0]?.content);
   });

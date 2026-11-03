@@ -82,9 +82,22 @@ function impliedCoverOf(sentence: string): (typeof IMPLIED_COVERS)[number] | und
   return named.sort((a, b) => a.at - b.at)[0]?.cover;
 }
 
-/** S5.BA9 r2 (review M1, I5.74, §5.6): whether a towel, a sheet or bath foam is what covers her in an own «Смелая» sentence (`impliedCoverOf`). */
+/**
+ * S5.BA9 r2 (review M1, I5.74, §5.6): whether a towel, a sheet or bath foam is what covers her in an own «Смелая» sentence (`impliedCoverOf`). S5.BAR (review M1): this only chooses
+ * whether an avatar made in Studio's frame is drawn under a cover; an imported avatar's frame is read by `wearsNoGarment`.
+ */
 export function namesImpliedCover(sentence: string): boolean {
   return impliedCoverOf(sentence) !== undefined;
+}
+
+/**
+ * S5.BAR (review M1, I5.74, §5.6: «lingerie at most»): whether an own «Смелая» sentence dresses her in no garment (`wearsAGarment`), the frame an imported avatar's, or one of unknown
+ * origin, is refused for (`implied-cover`). The test is inverted from the Studio side's: not «is she in a cover», which a model words in more ways than a list holds («in nothing but a
+ * towel», «a towel around her», «a bath full of foam», «covered in bubbles», «under the duvet»), but «does she wear anything»; so a frame that names any cover, in any form, and one
+ * that names none («her arms across her chest») are both refused. A false refusal costs one re-ask; a miss costs a frame.
+ */
+export function wearsNoGarment(sentence: string): boolean {
+  return !wearsAGarment(sentence);
 }
 
 /**
