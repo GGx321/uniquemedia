@@ -213,8 +213,10 @@ import { z } from "zod";
 //    category, or any `world` key (its slot schema is strict, and its refines allow the route and a bold level on a «Смелая» category alone). The effect: the run cannot resume, its photos read as
 //    planless, and the set is unreadable. `AvatarSummary.origin` and `ScenePlace.world` only travel within one build (the window and the engine ship together); nothing stores them.
 //  - S5.BA8a: `LaunchPreview.unitPhotoWorstMicros` (optional, additive): the worst price of one new photo at the draft's level, which the autopilot's month line divides the budget by. Only within one build, never stored.
-//  - S5.BA9: `OwnPlanSlot.route` (optional, engine-internal, plan.json only): an own scene of a «Смелая» set is drawn on the Seedream route. Rollback: an older build refuses a plan.json whose own
-//    slot carries it (the own slot is strict), so that run cannot resume and its photos read as planless; nothing else stores it (the scene set keeps its own scenes as they were).
+//  - S5.BA9: `OwnPlanSlot.route` (optional, engine-internal): an own scene of a «Смелая» set is drawn on the Seedream route; `SceneView.route` (already optional on every scene) now says so on
+//    such an own scene too. Stored in plan.json and, as on every routed photo, in the own photo's sidecar `source.route: "seedream"` (runJob.ts). Rollback: an older build refuses a plan.json
+//    whose own slot carries it (the own slot is strict), so that run cannot resume and its photos read as planless; it reads the sidecar fine (`GeneratedSourceSchema` is not strict, and
+//    `source.route` is a 5a.3 field it knows). The scene set keeps its own scenes as they were: the route is derived from the set's level, never stored on the scene.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
