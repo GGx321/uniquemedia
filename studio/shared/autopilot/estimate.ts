@@ -18,7 +18,8 @@ export const MAX_GENERATED_PER_AVATAR = MAX_COMPOSE_SCENES;
  *   so it is not exactly linear, and the launch's figure must equal the engine's compose estimate to the micro-dollar.
  * - `writerTypicalByRequests[r][n]` (5a.4, S5.BA5; BA5a review R2-L1): the same for n scenes carried by r requests. The bold writer call has a per-request term
  *   (`typicalPerCall`), so its expected cost depends on the requests too, and a split whose custom block may touch more chunks than its scenes fill is expected one term
- *   per chunk. Read before `writerTypicalMicros` when present; the engine fills it, the mock (fixed prices, no per-request term) need not.
+ *   per chunk. Read before `writerTypicalMicros` when present; the engine fills it. The mock need not: it prices its writer itself, with its own per-request term at «Смелая»
+ *   (`MOCK_BOLD_TYPICAL_QUARTERS`), and does not read `LaunchUnitPrices`.
  */
 export interface LaunchUnitPrices {
   photoWorstMicros: number;
