@@ -211,6 +211,9 @@ async function runCell({ phase, point }: Cell): Promise<void> {
 
 describe("a kill during the unlink of «Стоп»: the next start finishes it and every set is back with its owner (A20)", () => {
   const cells: Cell[] = PHASES.flatMap((phase) => POINTS.map((point) => ({ label: `${phase} · ${point}`, phase, point })));
+  // A renamed phase or point must not drop its push cell into the heavy run unseen.
+  const unknown = [...PUSH_CELLS].filter((label) => !cells.some((cell) => cell.label === label));
+  if (unknown.length > 0) throw new Error(`PUSH_CELLS names no cell of the table: ${unknown.join(", ")}`);
   for (const cell of cells) {
     // A push cell also runs in the heavy run, so the heavy run walks all twelve.
     if (PUSH_CELLS.has(cell.label)) sweepTest(cell.label, { push: cell, heavy: cell }, runCell);
