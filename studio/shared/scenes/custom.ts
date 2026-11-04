@@ -92,12 +92,32 @@ const WATER_NOUNS: ReadonlySet<string> = new Set(
   ["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck", "boat", "sailboat", "catamaran", "houseboat", "cove", "bay", "coast", "lido"].flatMap((noun) => (noun.endsWith("ch") ? [noun, `${noun}es`] : [noun, `${noun}s`])),
 );
 
+/** 2026-11-04 (the owner's answer after S5.BAR, «1 А»): a pier or a jetty is always at the water. */
+const PIER_NOUNS: ReadonlySet<string> = new Set(["pier", "piers", "jetty", "jetties"]);
+
+/** 2026-11-04 (the owner's answer): the outdoor places a name puts at the water when it also says the water («a pool terrace», «the deck of a sailboat», «a balcony over the sea»). */
+const OUTDOOR_HEADS: ReadonlySet<string> = new Set(
+  ["deck", "terrace", "balcony", "patio", "veranda", "dock", "boardwalk", "promenade"].flatMap((noun) => [noun, noun.endsWith("y") ? `${noun.slice(0, -1)}ies` : `${noun}s`]),
+);
+
+/** The words that say the water in such a name: every water head noun, and the water itself. */
+const WATER_WORDS: ReadonlySet<string> = new Set([...WATER_NOUNS, "water", "waters", "waterfront", "seafront", "beachfront", "lakeside"]);
+
+/** Two water words that name no water: a pool table and a bay window. */
+const NOT_THE_WATER = /\b(?:pool\s+tables?|bay\s+windows?)\b/gi;
+
 /**
  * 5a.4 (S5.BA3, §5.3.2): whether a custom place is a water place, so a «Смелая» slot there is drawn from the «by the water» bank (swimwear) and never from «rooms» (lingerie). Its head
  * noun decides, not any word in the name. The renderer's chip hint and caption call this one function (§5.9).
+ * 2026-11-04 (the owner's answer after S5.BAR): every outdoor place of a water world is in swimwear, so a pier, and an outdoor place (a deck, a terrace, a balcony, a patio, a veranda, a
+ * dock, a boardwalk, a promenade) whose name also says the water, are water places too: «the deck of a sailboat» as «the sundeck of a sailing yacht», «a pool terrace», «a balcony over the
+ * sea». A rooftop terrace or the deck of a chalet stays dry.
  */
 export function isWaterPlaceName(name: string): boolean {
-  return WATER_NOUNS.has(waterHeadNoun(name));
+  const head = waterHeadNoun(name);
+  if (WATER_NOUNS.has(head) || PIER_NOUNS.has(head)) return true;
+  if (!OUTDOOR_HEADS.has(head)) return false;
+  return (name.toLowerCase().replace(NOT_THE_WATER, " ").match(/[a-z']+/g) ?? []).some((word) => WATER_WORDS.has(word));
 }
 
 /**

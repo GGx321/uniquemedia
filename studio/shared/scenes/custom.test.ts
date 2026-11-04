@@ -314,7 +314,16 @@ describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
     },
   );
 
-  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "pool tables", "beach bars", "kitchen islands", "a seaside walk", "a sea cave by the sea", "a bay window", "a boat shop", "a coastal town", "a speedboat ride", "the deck of a sailboat"].map((n) => [n]))(
+  // 2026-11-04 (the owner's answer after S5.BAR, «1 А»): every outdoor place of a water world is in swimwear: a yacht's deck or sundeck, a pool terrace, a balcony or a terrace over
+  // the water, a pier. So «the deck of a sailboat» reads as «the sundeck of a sailing yacht» does (BAR backlog R4), and «a pier» moves from the list below to this one.
+  test.each(["the deck of a sailboat", "the deck of a yacht", "a yacht deck", "the pool deck", "a pool terrace", "a pool terrace at the villa", "a terrace overlooking the sea", "a balcony over the sea", "a hotel balcony with a sea view", "a patio by the pool", "a veranda above the bay", "a dock on the lake", "a pier", "a pier at sunset", "a wooden jetty", "two old piers", "the decks of the catamaran"].map((n) => [n]))(
+    "«%s» is a water place: an outdoor place the name puts at the water, or a pier (the owner's answer)",
+    (name) => {
+      expect(isWaterPlaceName(name)).toBe(true);
+    },
+  );
+
+  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "the deck of a ship", "a bedroom", "pool tables", "beach bars", "kitchen islands", "a seaside walk", "a sea cave by the sea", "a bay window", "a boat shop", "a coastal town", "a speedboat ride", "a rooftop terrace", "a terrace in Paris", "a balcony in Rome", "the deck of the chalet", "a terrace with a pool table", "a balcony by the bay window", "a river dock"].map((n) => [n]))(
     "«%s» is not a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(false);
