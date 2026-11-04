@@ -64,6 +64,15 @@ export function redressSlot(slot: PlanSlot, seed: number): PlanSlot | null {
 }
 
 /**
+ * Whether a stored sentence was written for this slot's moment: it says «she {moment}» word for word, in any case, as the template, the bold writer (its `moment-split` rule) and the plain
+ * sentence write it. A run that re-dressed a slot and journaled its sentence reads it back on a resume by this; a sentence written for the implied moment never says the re-dressed one.
+ */
+export function saysMomentOf(sentence: string, slot: Pick<PlanSlot, "activity">): boolean {
+  const moment = slot.activity.trim().replace(/[\s.,;:!]+$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])she ${moment}(?![\\p{L}\\p{N}])`, "iu").test(sentence);
+}
+
+/**
  * Whether a stored slot is a «rooms» frame (lingerie) at an outdoor place of hers, her balcony, in a custom world at the water: a slot stored before the owner's answer, which the
  * planner no longer draws (it draws «rooms» indoors only in such a world). Read by the slot's own world, the only world a run has (I5.78).
  */

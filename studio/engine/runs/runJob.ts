@@ -13,6 +13,7 @@ import type { BoldImageParams, ImageOk, ImageParams, ImageResult, OpenRouterClie
 import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, roomPlaceOf, slotLookOf, type AssembledSlot } from "../scenes";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { localSentences } from "../scenes/localSentences";
+import { isImpliedSlot, outdoorAtTheWater, redressSlot, saysMomentOf } from "../scenes/redress";
 import { slotKeyOf } from "../scenes/phoneLook";
 import { classifyFailure } from "./failures";
 import { foldRun, isBoldSlot, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
@@ -394,9 +395,15 @@ function slotTextProblemOf(result: Extract<AssembledSlot, { ok: false }>): Engin
 async function promptsOf(ctx: Context, state: RunState, master: LibraryReference): Promise<{ ok: true; prompts: ReadonlyMap<number, string> } | { ok: false; end: RunJobEnd }> {
   const { deps, job, plan } = ctx;
   const ledger: LedgerView = { reserveOf: (id) => deps.budget.ledger.reserveOf(id), closeOf: (id) => deps.budget.ledger.closeOf(id) };
-  const slots = plannedSlots(plan);
   // 5a.4 (S5.BA5, I5.74): the avatar's origin, read now (fail-closed when the engine does not say).
   const impliedNudity = deps.impliedNudityOf?.(plan.avatarId) === true;
+  // 2026-11-04 (the owner's answers after S5.BAR): a stored frame today's rules would not draw is re-dressed or ended, free, before the writer is asked anything.
+  const skipped = await settleStoredFrames(ctx, state, impliedNudity);
+  const current = new Map(state.slots.map((s) => [s.slot.slotIndex, s.slot]));
+  const slots = plannedSlots(plan).map((slot) => {
+    const now = current.get(slot.slotIndex);
+    return now === undefined || isOwnSlot(now) ? slot : now;
+  });
   const written = await runWriterPhase(
     {
       chat: deps.chat,
@@ -418,7 +425,11 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       // 5a.2: the code template writes every slot whose place and moment the banks find by name; the rest go to the model at the chunk's reserved ids.
       // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
       local: localSentences({ slots: slots.map((slot) => ({ ...slot, route: slot.route })), keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories, impliedNudity }),
-      chunks: plan.writerChunks,
+      // A slot ended above is never asked of the writer: its chunk asks the others, and a chunk left with none is not asked at all.
+      chunks: plan.writerChunks.flatMap((chunk) => {
+        const slotIndexes = chunk.slotIndexes.filter((slotIndex) => !skipped.has(slotIndex));
+        return slotIndexes.length === 0 ? [] : [{ ...chunk, slotIndexes }];
+      }),
       sentences: state.sentences,
       writerDone: state.writerDone,
       ledger,
@@ -434,7 +445,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   // 5a.2 (S5.6d, plan s5a2 §5.5): only the slots still open are assembled, and a sentence that breaks today's word rules ends ITS slot (free, nothing was reserved),
   // not the run. Slots that ended earlier (on a resume) are neither assembled nor ended again.
   const hairLength = deps.hairLengthOf?.(plan.avatarId);
-  const hairLines = hairLength === undefined ? null : hairLinesOf(plan.scenes.slots, hairLength, plan.runId);
+  const hairLines = hairLength === undefined ? null : hairLinesOf(state.slots.map((s) => s.slot), hairLength, plan.runId);
   const openSlots = state.slots.filter((s) => s.end === null);
   const results = assembleRun(job.descriptor, { ...plan.scenes, slots: openSlots.map((s) => s.slot) }, written.sentences, master, {
     runId: plan.runId,
@@ -458,6 +469,39 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
     await journal(ctx, { type: "prompts", prompts: [...assembled].map(([slotIndex, prompt]) => ({ slotIndex, prompt })), at: at(ctx) });
   }
   return { ok: true, prompts: assembled };
+}
+
+/**
+ * 2026-11-04 (the owner's answers after S5.BAR, «1 А» and «2 А»): every stored scene meets today's rules here, where its prompt is made: a set's scene, a request run's plan, an autopilot slice
+ * and a resume of an old run alike. For each open planned slot, unless its sentence is the owner's own (`ownText`, §5.6):
+ * - a «rooms» slot on her balcony in a custom world at the water (`outdoorAtTheWater`, lingerie over the water) ends, for every avatar;
+ * - for an imported avatar or one of unknown origin, an implied cover (`isImpliedSlot`) with no sentence yet is re-dressed in lingerie (`redressSlot`, seeded on the plan's seed, the same
+ *   route and reserve), and so is one whose stored sentence says the re-dressed moment (an earlier job of this run wrote it, `saysMomentOf`); one whose stored sentence is any other (the
+ *   set's text, or a sentence journaled before the rule) ends, since its free text cannot be re-dressed.
+ * A slot ends `slot-text-problem`, the outcome of a sentence our word rules refuse: before any reserve or request, so it is free. The re-dressed slot is the job's own; plan.json keeps
+ * what was stored, and a resume re-dresses it the same way. Returns the slots it ended.
+ */
+async function settleStoredFrames(ctx: Context, state: RunState, impliedNudity: boolean): Promise<Set<number>> {
+  const ended = new Set<number>();
+  for (const s of state.slots) {
+    const slot = s.slot;
+    if (s.end !== null || isOwnSlot(slot) || slot.ownText === true) continue;
+    const stored = slot.sentence ?? state.sentences.get(slot.slotIndex);
+    const outdoors = outdoorAtTheWater(slot);
+    const implied = !impliedNudity && isImpliedSlot(slot);
+    const redrawn = outdoors || !implied ? null : redressSlot(slot, ctx.plan.scenes.seed);
+    // A stored sentence is the re-dressed slot's when it says its moment (an earlier job of this run re-dressed and wrote it); any other is the implied frame's own free text.
+    const redressed = redrawn !== null && (stored === undefined || saysMomentOf(stored, redrawn)) ? redrawn : null;
+    if (redressed !== null) {
+      s.slot = redressed;
+      continue;
+    }
+    if (!outdoors && !implied) continue;
+    const why = outdoors ? "puts her in lingerie outdoors in a world at the water" : "leaves her under an implied cover, which an imported avatar is never drawn in";
+    await endSlot(ctx, s, { status: "failed", error: { code: "VALIDATION", sceneReason: "slot-text-problem", detail: `the stored scene of slot ${slot.slotIndex} ${why}` } });
+    ended.add(slot.slotIndex);
+  }
+  return ended;
 }
 
 type GateResult = { verdict: "pass"; qa: PhotoQa } | { verdict: "retry" | "reject"; gate: string; reason: string } | { verdict: "dropped" };
