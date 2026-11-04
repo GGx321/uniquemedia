@@ -4,6 +4,7 @@ import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared
 import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { isWaterPlaceName } from "../../shared/scenes/custom";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
 import { wearsNoGarment } from "../../shared/scenes/ownScene";
 import { slotCoverageOf } from "../../shared/scenes/template";
@@ -209,7 +210,7 @@ function writerBoldSystemPrompt(): string {
     "You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.",
     "Reference images supply her identity, so you never describe her face, never give her a name, and never describe her hair, eyes or body type.",
     "",
-    'A slot with a world is a private moment of hers at home or where she is staying. The world is the place her day belongs to: set the location inside it (her hotel room in that city, the cabin of that boat, the balcony over that view) and add one ordinary detail that ties the photo to it, a different one in each slot, such as the view through her window, the sound of the city below, flowers in a glass or a souvenir she brought back; no paper of any kind (no paper bag, napkin, receipt, ticket or card). Unless the location is by the water, she is never in a public place, such as the world\'s cafe, restaurant, bar, street, shop, office, gym, beach or marina. Never join her location and the world with "at", "in" or "on" ("her room at the restaurant"): the world shows only as its city, its boat, its view or something she brought back. By the water she is at the world\'s own water place, in her swimwear. A slot without a world keeps its location as given.',
+    'A slot with a world is a private moment of hers at home or where she is staying. The world is the place her day belongs to: set the location inside it (her hotel room in that city, the cabin of that boat, the balcony over that view) and add one ordinary detail that ties the photo to it, a different one in each slot, such as the view through her window, the sound of the city below, flowers in a glass or a souvenir she brought back; no paper of any kind (no paper bag, napkin, receipt, ticket or card). Unless the location is by the water, she is never in a public place, such as the world\'s cafe, restaurant, bar, street, shop, office, gym, beach or marina. Never join her location and the world with "at", "in" or "on" ("her room at the restaurant"): the world shows only as its city, its boat, its view or something she brought back. By the water she is at the world\'s own water place, in her swimwear. When the world is by the water and she is not in swimwear, she stays indoors: in its cabin, her hotel room, her bedroom or her bathroom, never on its deck, pool, terrace, balcony, beach or pier. A slot without a world keeps its location as given.',
     "",
     "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's location, world, time of day, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, and that one ordinary detail. The shot and the pose tell you who takes the photo and how she is turned: keep to them, but never write them, and never write the words world or slot. Do not describe the light, the colours or the mood; if light comes up, name only its source.",
     "",
@@ -303,8 +304,10 @@ export type WriterProblem =
  * - `public-place` (P-BA W2:2): a slot with a world put in a public place of it («in the seafood restaurant»); by the water its beach is her place.
  * - `moment-split` (P-BA W1:2, W2:2): «she» and the bank moment are not there word for word and in one piece, which the clip's «Как в сцене» needs (frameFacts.ts).
  * - `bare-place` (S5.BA4c, P-BW2 and P-BW3): the sentence opens with the slot's place and no preposition («Her balcony she …», «A lounger by the water she …»).
+ * - `outdoor-lingerie` (2026-11-04, the owner's answer after S5.BAR): a «rooms» slot (lingerie) with a world put her outdoors at the water: at a pool, a beach, a pier or the like in any
+ *   world, and also on a deck, a terrace or a balcony when its world is at the water (`isWaterPlaceName`), where lingerie is drawn only indoors (`outdoorPlacesIn`).
  */
-export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place"] as const;
+export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place", "outdoor-lingerie"] as const;
 /**
  * S5.BA9 r2 (review M1): what only the idea writer's «Смелая» variant raises beside `exposure-word` (`readOwnBoldScenes`; never the compose writer's bold reader, so its floor pin
  * leaves it out), of its scene, asked again once like the others:
@@ -313,8 +316,8 @@ export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word"
  */
 export const OWN_BOLD_PROBLEMS = ["implied-cover"] as const;
 export type BoldProblem = (typeof BOLD_PROBLEMS)[number] | (typeof OWN_BOLD_PROBLEMS)[number];
-/** The two bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
-export type WordedBoldProblem = "label-word" | "public-place" | "bare-place";
+/** The bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
+export type WordedBoldProblem = "label-word" | "public-place" | "bare-place" | "outdoor-lingerie";
 /** What the bold reader finds in one slot's sentence: a problem, with the words it found for the two that name them. */
 type BoldFinding = Exclude<BoldProblem, WordedBoldProblem> | { problem: WordedBoldProblem; words: readonly string[] };
 
@@ -427,6 +430,8 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "implied-cover": (r) => `slot(s) ${slotList(r.boldSlots?.["implied-cover"] ?? [])} left her in only a towel, a sheet or bath foam: dress her in lingerie`,
   "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
   "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
+  // 2026-11-04 (the owner's answer after S5.BAR): the outdoor places of a world at the water are in swimwear.
+  "outdoor-lingerie": (r) => `slot(s) ${slotList(r.boldSlots?.["outdoor-lingerie"] ?? [])} put her outdoors by the water in lingerie${toldOf(r.boldWords?.["outdoor-lingerie"])}; keep her in the slot's location, never outdoors by the water`,
   "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
   // S5.BA4d: told the place's own preposition when the table knows the place («write it as "On her balcony"»).
   "bare-place": (r) =>
@@ -853,6 +858,46 @@ function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
   return found;
 }
 
+/**
+ * 2026-11-04 (the owner's answer after S5.BAR, «1 А»): the outdoor places at the water where she is never in lingerie, in any world: a pool, a beach, a pier and the like.
+ */
+const WATER_OUTDOOR_NOUNS = "sundecks?|pools?|poolsides?|beach(?:es)?|shores?|shorelines?|sands?|piers?|jett(?:y|ies)|docks?|lidos?";
+/** And the outdoor places she is never in lingerie at when her world is at the water: there a deck, a terrace or a balcony is over the water. */
+const OUTDOOR_NOUNS = "decks?|terraces?|balcon(?:y|ies)|verandas?|patios?|boardwalks?|promenades?";
+/** The words that say where she is before such a place («on the deck», «by the pool»). */
+const WHERE = "in|at|on|inside|into|outside|by|beside";
+/** A word between them is never another place word, so a match cannot run from «In her cabin» across «on» to «the deck»; «the end of the pier» reads. */
+const GAP_WORD = String.raw`(?!(?:in|at|on|by|beside|inside|outside|into|onto|near|over|above|below|under|behind|across|along|from|to|with|toward|towards|through|past|and|or)\b)[\w'-]+`;
+const outdoorForm = (nouns: string): RegExp =>
+  new RegExp(String.raw`\b(?:${WHERE})\s+(?:${DETERMINER}\s+)?(?:${GAP_WORD}\s+){0,3}?(?:${DETERMINER}\s+)?(?<noun>${nouns})\b`, "gi");
+const WATER_OUTDOOR_FORM = outdoorForm(WATER_OUTDOOR_NOUNS);
+const ANY_OUTDOOR_FORM = outdoorForm(`${WATER_OUTDOOR_NOUNS}|${OUTDOOR_NOUNS}`);
+/** A place right before the phrase: the phrase says where that place is («her room by the sea», «the patio by the pool», «her cabin on the deck»), not where she is. */
+const A_PLACE_BEFORE = /\b(?:rooms?|bedrooms?|suites?|cabins?|staterooms?|bathrooms?|villas?|apartments?|flats?|house|houses|home|hotels?|cottages?|chalets?|bungalows?|windows?|doors?|portholes?|patios?|terraces?|balcon(?:y|ies)|verandas?|decks?|sundecks?)\s+$/i;
+/** She looks at it: «looking out at the pool», «gazes at the beach», «looks down at the shore». */
+const LOOKING_AT = /\b(?:(?:look|gaz|star|glanc|peer|smil|watch)\w*\s+(?:out\s+|down\s+|over\s+)?|out\s+|down\s+)$/i;
+/** A thing named for the place, not the place («a pool towel», «the beach house», «the balcony door», «a pool table»), or a pool of light. */
+const A_THING_AFTER = /^(?:'s\s+(?:[\w-]+\s+)?|\s+)(?:house|home|cottage|villa|apartment|flat|suite|room|bedroom|cabin|box|bag|tote|basket|cup|towel|umbrella|hat|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet|doors?|windows?|tables?)\b|^\s+of\s+(?:\w+\s+)?(?:light|lamplight|sunlight|shade|shadow)\b/i;
+
+/**
+ * 2026-11-04 (the owner's answer after S5.BAR, «1 А»): the outdoor places at the water a «rooms» slot's sentence puts her at, the noun of each, lower-cased. `waterWorld`: her world is at
+ * the water, so a deck, a terrace or a balcony there is one too. When in doubt, refuse, as `publicPlacesIn` does. Not a place she is at: one that says where another place is (a place
+ * right before it), a view of it (she looks at it, or out or down at it), a place she came back from (`BACK_FROM`, `TIME_SPENT`), a thing named for it (a pool towel, the beach house),
+ * a pool of light, and a direction («in from the deck»).
+ */
+function outdoorPlacesIn(sentence: string, waterWorld: boolean): string[] {
+  const found: string[] = [];
+  for (const match of sentence.matchAll(waterWorld ? ANY_OUTDOOR_FORM : WATER_OUTDOOR_FORM)) {
+    const before = sentence.slice(0, match.index);
+    const after = sentence.slice(match.index + match[0].length);
+    if (A_DIRECTION.test(match[0]) || A_PLACE_BEFORE.test(before) || /^-\w/.test(after) || A_THING_AFTER.test(after)) continue;
+    if (/^at\b/i.test(match[0]) && LOOKING_AT.test(before)) continue;
+    if (BACK_FROM.test(before) || (/^(?:at|in|on)\b/i.test(match[0]) && TIME_SPENT.test(before))) continue;
+    found.push((match.groups?.["noun"] ?? "").toLowerCase());
+  }
+  return found;
+}
+
 /** The bank moment's text without the punctuation a stored text may end with (the plain sentence's and frameFacts.ts's `trimmed`). */
 const momentText = (text: string): string => text.trim().replace(/[\s.,;:!]+$/, "");
 
@@ -907,6 +952,9 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
   if (labels.length > 0) problems.push({ problem: "label-word", words: labels.map((word) => word.toLowerCase()) });
   const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water });
   if (places.length > 0) problems.push({ problem: "public-place", words: places });
+  // 2026-11-04 (the owner's answer after S5.BAR): a «rooms» slot, in lingerie, is never outdoors at the water; in a world at the water it is indoors.
+  const outdoors = slot.world === undefined || water ? [] : outdoorPlacesIn(sentence, isWaterPlaceName(slot.world));
+  if (outdoors.length > 0) problems.push({ problem: "outdoor-lingerie", words: outdoors });
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
   const bare = barePlaceOf(sentence, slot.location);
   if (bare !== null) problems.push({ problem: "bare-place", words: bare.hint === undefined ? [] : [bare.hint] });
