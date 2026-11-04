@@ -1,11 +1,11 @@
 import { isCustomCategory } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
-import { isWaterPlaceName } from "../../shared/scenes/custom";
+import { isWaterPlaceName, isWaterWorld } from "../../shared/scenes/custom";
 import { atSlotLevel, seedreamRoute } from "../../shared/scenes/level";
 import { fittingMoments, generalOutfits, kindOfDeck, legwearOfSlot, outfitInfoOf, pinnedAt, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Activity, type Place, type Pool } from "./pools";
-import { withoutImplied } from "./poolAt";
+import { indoorOnly, withoutImplied } from "./poolAt";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
@@ -54,9 +54,19 @@ function preferred<T>(items: readonly T[], nameOf: (item: T) => string, avoid: R
  */
 export function redrawSlot(input: RedrawInput): PlanSlot {
   // 5a.4 (S5.BA3, I5.74): an imported avatar's pool holds no implied cover (a pool with none comes back as it is, so nothing else moves).
-  const pool = input.impliedNudity === true ? input.pool : withoutImplied(input.pool);
-  const drawn = redrawIn({ ...input, pool });
+  const forOrigin = input.impliedNudity === true ? input.pool : withoutImplied(input.pool);
+  const drawn = redrawIn({ ...input, pool: indoorsAtTheWater(input, forOrigin) });
   return withWorld(input, drawn);
+}
+
+/**
+ * 2026-11-04 (the owner's answer after S5.BAR, «1 А»): a routed custom scene of «rooms» (a «Смелая» pool with no water place) whose world is at the water is redrawn indoors only
+ * (`indoorOnly`): there her balcony is a balcony over the water. A redraw with no world pool cannot read the world, and the stricter reading wins. Any other scene's pool comes back as it is.
+ */
+function indoorsAtTheWater(input: RedrawInput, pool: Pool): Pool {
+  const rooms = input.slot.route === "seedream" && isCustomCategory(input.slot.category) && pool.captureDeck !== undefined && !pool.locations.some((place) => place.water === true);
+  if (!rooms) return pool;
+  return input.worldPool === undefined || isWaterWorld(input.worldPool.locations.map((place) => place.name)) ? indoorOnly(pool) : pool;
 }
 
 /**

@@ -121,6 +121,14 @@ export function isWaterPlaceName(name: string): boolean {
 }
 
 /**
+ * 2026-11-04 (the owner's answer after S5.BAR): a custom category's world is at the water when any of its places is a water place. In such a world a «Смелая» frame in lingerie is drawn
+ * only indoors (her room, her bathroom, by her window, on her sofa): never on her balcony, which there is a balcony over the water, and every outdoor place is in swimwear.
+ */
+export function isWaterWorld(places: readonly string[]): boolean {
+  return places.some(isWaterPlaceName);
+}
+
+/**
  * The tags an old custom activity is read with (plan s5a2 §5.2 step 2, I5.23): one that looks at the camera, the viewer, the lens or the phone (the
  * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone or whose eyes are already
  * busy (watching, looking, reading…) carries its own gaze; one that names her hair carries its own hair.

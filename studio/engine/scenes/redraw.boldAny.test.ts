@@ -151,6 +151,27 @@ describe("a routed custom scene", () => {
     }
   });
 
+  // 2026-11-04 (the owner's answer after S5.BAR, «1 А»): a «rooms» scene of a world at the water is redrawn indoors only; with no world pool to read the world by, the stricter reading wins.
+  test("a «rooms» scene of a world at the water, or of a world it cannot read, redraws indoors only; of a dry world it may reach her balcony", () => {
+    const rooms = slots.filter((s) => !waterBank(s));
+    expect(rooms.length).toBeGreaterThan(0);
+    const dry: Pool = { ...PARIS, locations: PARIS.locations.filter((l) => !isWaterPlaceName(l.name)) };
+    const indoor = (slot: PlanSlot): boolean => CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.name === slot.location)?.room === true;
+    let dryBalconies = 0;
+    for (let k = 1; k <= 12; k++) {
+      for (const slot of rooms) {
+        for (const worldPool of [PARIS, undefined]) {
+          for (const impliedNudity of [false, true]) {
+            const out = redrawSlot({ seed: 77, k, slot, pool: poolOfSlot(slot, impliedNudity) ?? PARIS, ...(worldPool === undefined ? {} : { worldPool }), avoid: NO_AVOID, impliedNudity });
+            expect({ k, world: worldPool === undefined ? "unread" : "water", place: out.location, indoor: indoor(out) }).toEqual({ k, world: worldPool === undefined ? "unread" : "water", place: out.location, indoor: true });
+          }
+        }
+        if (redrawSlot({ seed: 77, k, slot, pool: poolOfSlot(slot, true) ?? PARIS, worldPool: dry, avoid: NO_AVOID, impliedNudity: true }).location === "her balcony") dryBalconies++;
+      }
+    }
+    expect(dryBalconies).toBeGreaterThan(0);
+  });
+
   test("an imported avatar's redraw holds no implied cover", () => {
     for (let k = 1; k <= 20; k++) for (const slot of slots) expect(isImplied(redrawSlot({ seed: 5, k, slot, pool: poolOfSlot(slot, true) ?? PARIS, worldPool: PARIS, avoid: NO_AVOID }))).toBe(false);
   });

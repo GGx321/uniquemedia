@@ -1,5 +1,6 @@
 import { isCustomCategory, type SceneLevel, type SceneRoute } from "../../shared/engine";
 import { ORDINARY_BANK_CATEGORIES } from "../../shared/scenes/banks/types";
+import { shotOf } from "../../shared/scenes/captures";
 import { BOLD_POOLS, CUSTOM_BOLD_POOLS, POOLS, type Pool } from "./pools";
 import { CATEGORIES, type Category } from "./types";
 
@@ -42,9 +43,33 @@ export function poolAt(category: Category, level: SceneLevel | undefined, implie
   return level === "bold" && !impliedNudity ? withoutImplied(pool) : pool;
 }
 
-/** The two shared «Смелая» pools of the custom categories, for the avatar's origin. */
-export function customBoldPools(impliedNudity: boolean): { rooms: Pool; water: Pool } {
-  return impliedNudity ? CUSTOM_BOLD_POOLS : { rooms: withoutImplied(CUSTOM_BOLD_POOLS.rooms), water: withoutImplied(CUSTOM_BOLD_POOLS.water) };
+/** The pools already cut to their rooms, so a pool is cut once and the same object comes back. */
+const INDOOR = new WeakMap<Pool, Pool>();
+
+/**
+ * 2026-11-04 (the owner's answer after S5.BAR, «1 А»): the pool cut to its rooms (`room`), for a custom world at the water, where lingerie is drawn only indoors: «rooms» without her balcony,
+ * which there is a balcony over the water. The capture deck keeps only the captures a room takes (the shot deck in step), so a capture only the balcony took is not dealt. A pool of rooms alone
+ * comes back as it is.
+ */
+export function indoorOnly(pool: Pool): Pool {
+  if (pool.locations.every((place) => place.room === true)) return pool;
+  const known = INDOOR.get(pool);
+  if (known !== undefined) return known;
+  const locations = pool.locations.filter((place) => place.room === true);
+  const taken = new Set(locations.flatMap((place) => place.activities.flatMap((activity) => activity.captures ?? [])));
+  const captureDeck = pool.captureDeck?.filter((capture) => taken.has(capture));
+  const indoor: Pool = { ...pool, locations, ...(captureDeck === undefined ? {} : { captureDeck, shotDeck: captureDeck.map(shotOf) }) };
+  INDOOR.set(pool, indoor);
+  return indoor;
+}
+
+/**
+ * The two shared «Смелая» pools of the custom categories, for the avatar's origin. 2026-11-04 (the owner's answer): in a world at the water (`waterWorld`) «rooms» is its rooms alone
+ * (`indoorOnly`): lingerie only indoors.
+ */
+export function customBoldPools(impliedNudity: boolean, waterWorld = false): { rooms: Pool; water: Pool } {
+  const pools = impliedNudity ? CUSTOM_BOLD_POOLS : { rooms: withoutImplied(CUSTOM_BOLD_POOLS.rooms), water: withoutImplied(CUSTOM_BOLD_POOLS.water) };
+  return waterWorld ? { ...pools, rooms: indoorOnly(pools.rooms) } : pools;
 }
 
 /**

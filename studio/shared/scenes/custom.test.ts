@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ScenePose } from "../engine";
 import { CUES, GAZE } from "./banks";
 import type { Capture } from "./captures";
-import { covers, customActivityAllowed, customMomentOf, isWaterPlaceName, locativeOf, rendersActivity, waterHeadNoun, type CustomPool } from "./custom";
+import { covers, customActivityAllowed, customMomentOf, isWaterPlaceName, isWaterWorld, locativeOf, rendersActivity, waterHeadNoun, type CustomPool } from "./custom";
 import { templateSentence, type TemplateSlot } from "./template";
 
 // 5a.2 (S5.6a, plan s5a2 §5.2 step 2, K-7): today's custom pools render through a small adapter: «{At}, she is {activity}, wearing {outfit}, {gaze},
@@ -329,6 +329,14 @@ describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
       expect(isWaterPlaceName(name)).toBe(false);
     },
   );
+
+  // 2026-11-04 (the owner's answer, «1 А»): a world is at the water when any of its places is; there a «Смелая» frame in lingerie is drawn only indoors.
+  test("a world is at the water when any one of its places is a water place, and not when none is", () => {
+    expect(isWaterWorld(["a corner cafe in Nice", "a quiet bookshop", "a pool terrace"])).toBe(true);
+    expect(isWaterWorld(["the deck of a sailboat"])).toBe(true);
+    expect(isWaterWorld(["a corner cafe in Nice", "a rooftop terrace", "a bridge over the river"])).toBe(false);
+    expect(isWaterWorld([])).toBe(false);
+  });
 
   test("the words «below», «above», «beneath», «beyond», «overlooking» and «facing» end the head noun only for the water parse: locativeOf keeps today's output", () => {
     expect(locativeOf("a cabin below deck")).toBe("on a cabin below deck");

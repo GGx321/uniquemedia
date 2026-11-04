@@ -204,6 +204,25 @@ describe("a custom category at «Смелая» (§5.3)", () => {
     }
   });
 
+  // 2026-11-04 (the owner's answer after S5.BAR, «1 А»): in a world at the water lingerie is drawn only indoors; her balcony there is a balcony over the water, which is in swimwear.
+  test("in a world at the water every «rooms» slot is indoors, never on her balcony; a dry world still reaches her balcony", () => {
+    const balcony = (slot: PlanSlot): boolean => slot.location === "her balcony";
+    let dryBalconies = 0;
+    for (const seed of SEEDS.slice(0, 12)) {
+      for (const n of [1, 2, 5, 9, 20, 30]) {
+        for (const impliedNudity of [false, true]) {
+          const wet = planWithPools({ seed, count: n, categories: [CUSTOM], level: "bold", impliedNudity }, pools({ [CUSTOM]: PARIS })).slots;
+          expect(tiersOf(wet)).toEqual(levelCountsOf(n));
+          for (const slot of wet.filter((s) => !water(s))) {
+            expect({ seed, n, place: slot.location, indoor: CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.name === slot.location)?.room === true }).toEqual({ seed, n, place: slot.location, indoor: true });
+          }
+          dryBalconies += planWithPools({ seed, count: n, categories: [CUSTOM], level: "bold", impliedNudity }, pools({ [CUSTOM]: DRY })).slots.filter(balcony).length;
+        }
+      }
+    }
+    expect(dryBalconies).toBeGreaterThan(0);
+  });
+
   test("lingerie never reaches the water and swimwear never reaches a room", () => {
     for (const seed of SEEDS.slice(0, 12)) {
       for (const slot of planWithPools({ seed, count: 30, categories: [CUSTOM], level: "bold" }, pools({ [CUSTOM]: PARIS })).slots) {

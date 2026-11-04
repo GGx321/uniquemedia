@@ -635,9 +635,10 @@ function planCustomBold(opts: {
 }): PlanSlot[] {
   const { seed, category, stored, n, startIndex, excluded, recent, share } = opts;
   if (n === 0) return [];
-  const banks = customBoldPools(opts.impliedNudity);
   const worlds = stored.locations.map((place) => place.name);
   const waterWorlds = worlds.filter(isWaterPlaceName);
+  // 2026-11-04 (the owner's answer after S5.BAR): in a world at the water «rooms» is drawn indoors only (`indoorOnly`); a dry world draws it whole, as before.
+  const banks = customBoldPools(opts.impliedNudity, waterWorlds.length > 0);
   const wet = worlds.length === 0 ? 0 : Math.floor((n * waterWorlds.length + Math.floor(worlds.length / 2)) / worlds.length);
   const wetAt = new Set(shuffle(makeRng(subSeed(seed, `branch:${category}`)), Array.from({ length: n }, (_, i) => i)).slice(0, wet));
   const [roomsShare, waterShare] = spreadLevels(share, [n - wet, wet], () => shuffle(makeRng(subSeed(seed, `tier-spread:${category}`)), [0, 1])) as [LevelCounts, LevelCounts];

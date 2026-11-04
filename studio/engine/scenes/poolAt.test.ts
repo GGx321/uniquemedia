@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import { BOLD_POOLS, CUSTOM_BOLD_POOLS, POOLS } from "./pools";
-import { poolAt, poolOfSlot, withoutImplied } from "./poolAt";
+import { indoorOnly, poolAt, poolOfSlot, withoutImplied } from "./poolAt";
 import { ORDINARY_BUILT_INS } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -37,6 +37,36 @@ describe("withoutImplied", () => {
     expect(stripped.captureDeck).toEqual(POOLS.nightwear.captureDeck);
     expect(stripped.legwear).toEqual(POOLS.nightwear.legwear);
     expect(stripped.shotDeck).toEqual(POOLS.nightwear.shotDeck);
+  });
+});
+
+// 2026-11-04 (the owner's answer after S5.BAR, «1 А»): in a custom world at the water lingerie is drawn only indoors, so the «rooms» pool of such a world is its rooms alone: her
+// room, her bathroom, her window and her sofa, never her balcony (there a balcony over the water). A capture only the balcony took leaves the deck with it.
+describe("indoorOnly", () => {
+  const captures = (pool: ReturnType<typeof indoorOnly>): Set<string> => new Set(pool.locations.flatMap((l) => l.activities.flatMap((a) => a.captures ?? [])));
+
+  test("keeps the rooms of «rooms» and drops her balcony, with every moment of each room", () => {
+    const rooms = CUSTOM_BOLD_POOLS.rooms;
+    const indoor = indoorOnly(rooms);
+    expect(rooms.locations.some((l) => l.room !== true)).toBe(true);
+    expect(indoor.locations.map((l) => l.name)).toEqual(rooms.locations.filter((l) => l.room === true).map((l) => l.name));
+    expect(indoor.locations.map((l) => l.name)).not.toContain("her balcony");
+    for (const place of indoor.locations) expect(place.activities).toEqual(rooms.locations.find((l) => l.name === place.name)?.activities ?? []);
+  });
+
+  test("deals only the captures its rooms take, its shot deck in step", () => {
+    const indoor = indoorOnly(CUSTOM_BOLD_POOLS.rooms);
+    const taken = captures(indoor);
+    expect(CUSTOM_BOLD_POOLS.rooms.captureDeck?.some((c) => !taken.has(c))).toBe(true);
+    expect((indoor.captureDeck ?? []).length).toBeGreaterThan(0);
+    for (const capture of indoor.captureDeck ?? []) expect(taken.has(capture)).toBe(true);
+    expect(indoor.shotDeck).toHaveLength(indoor.captureDeck?.length ?? -1);
+  });
+
+  test("keeps the implied covers out of an imported avatar's pool, and hands back a pool of rooms alone as it is", () => {
+    const stripped = indoorOnly(withoutImplied(CUSTOM_BOLD_POOLS.rooms));
+    expect(implied(stripped)).toEqual([]);
+    expect(indoorOnly(stripped)).toBe(stripped);
   });
 });
 
