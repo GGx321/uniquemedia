@@ -31,7 +31,7 @@ import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { BANKS } from "../../shared/scenes/banks";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
-import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
+import { covers, isWaterPlaceName, isWaterWorld } from "../../shared/scenes/custom";
 import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { slotCoverageOf } from "../../shared/scenes/template";
 import { namesImpliedCover, ownCoverageOf, ownSceneMarkerOf, ownSceneRouteOf } from "../../shared/scenes/ownScene";
@@ -435,7 +435,8 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
         const branch = wetAt[k] === true ? ("water" as const) : ("rooms" as const);
         const j = dealt[branch]++;
         const sceneLevel = levels[branch][j];
-        const draw = customBoldDraw(branch, j, { level: sceneLevel ?? "ordinary", impliedNudity });
+        // 2026-11-04 (the owner's answer after S5.BAR): in a world at the water «rooms» is drawn indoors only, as the engine's planner draws it.
+        const draw = customBoldDraw(branch, j, { level: sceneLevel ?? "ordinary", impliedNudity, waterWorld: waterWorlds.length > 0 });
         const world = branch === "water" ? waterWorlds[j % Math.max(1, waterWorlds.length)] : worlds[j % Math.max(1, worlds.length)];
         scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: { ...draw.place, ...(world === undefined ? {} : { world }) }, idea: null, text: null, edited: false, removed: false });
       }
@@ -1425,8 +1426,11 @@ export class MockSceneSets {
           // water»), keeps its level, and takes another world of the category's places (a water scene a water place); with none left to take it keeps the world it has.
           const place = scene.place;
           const branch = bankPlaceOf({ category: ref, route: scene.route, location: place.location })?.place.water === true ? ("water" as const) : ("rooms" as const);
+          const category = this.#deps.category(ref);
           const draw = customBoldDraw(branch, k + scene.sceneId, {
             impliedNudity,
+            // 2026-11-04 (the owner's answer after S5.BAR; the engine's `redrawSlot`): a «rooms» scene of a world at the water, or of a category the mock cannot read, is redrawn indoors only.
+            waterWorld: category === undefined || isWaterWorld(tablesOf(category).map((t) => t.place)),
             avoid: { locations: shown, outfits: shownOutfits },
             capture: scene.capture ?? captureOfShot(scene.shot),
             level: scene.level ?? "ordinary",

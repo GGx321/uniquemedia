@@ -5,7 +5,7 @@ import { POOLS } from "../../engine/scenes/pools";
 import { PlanSlotSchema, type PlanSlot } from "../../engine/scenes/schema";
 import type { PlannerCategory } from "../../engine/scenes/types";
 import { boldReader, PLACE_PREPOSITIONS } from "../../engine/scenes/writer";
-import { splitCount, type AvatarSummary, type CategoryPool, type CategoryRef, type CategorySummary, type SceneSetView, type SceneView } from "../../shared/engine";
+import { MAX_SCENES_PER_WRITE, splitCount, type AvatarSummary, type CategoryPool, type CategoryRef, type CategorySummary, type SceneSetView, type SceneView } from "../../shared/engine";
 import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { BANKS } from "../../shared/scenes/banks";
 import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
@@ -47,9 +47,13 @@ const TRIP_POOL: CategoryPool = {
 const TRIP_CATEGORY: CategorySummary = { categoryId: TRIP, name: "Поездка", description: "поездка", label: "Trip", style: "phone", pool: TRIP_POOL, model: "x-ai/grok-4.3", spentMicros: 0, createdAt: "2026-10-27T10:00:00.000Z", updatedAt: "2026-10-27T10:00:00.000Z" };
 const WORLDS = TRIP_POOL.locations.map((l) => l.name);
 const WATER_WORLDS = WORLDS.filter(isWaterPlaceName);
+/** The same trip without its water places: a dry world. */
+const CITY = "cat-city-fixture";
+const CITY_POOL: CategoryPool = { ...TRIP_POOL, locations: TRIP_POOL.locations.filter((l) => !isWaterPlaceName(l.name)) };
+const CITY_CATEGORY: CategorySummary = { ...TRIP_CATEGORY, categoryId: CITY, name: "Город", description: "город", label: "City", pool: CITY_POOL };
 
 function mockOf(): Mock {
-  return makeMock({ avatars: [MIA, STUDIO], photos: [], categories: [TRIP_CATEGORY] });
+  return makeMock({ avatars: [MIA, STUDIO], photos: [], categories: [TRIP_CATEGORY, CITY_CATEGORY] });
 }
 
 async function composed(m: Mock, avatar: AvatarSummary, count: number, categories: readonly CategoryRef[]): Promise<SceneSetView> {
@@ -240,6 +244,48 @@ describe("a custom category at «Смелая» on the mock is the engine's (pla
         const engineWet = slots.filter((s) => branchOf({ location: s.location }) === "water");
         expect({ n, seed, routed: slots.every((s) => s.route === "seedream"), wet: engineWet.length, tiers: tiersOf(slots), waterWorlds: engineWet.every((s) => WATER_WORLDS.includes(s.world ?? "")) }).toEqual({ n, seed, routed: true, wet: wetOf(n), tiers: levelCountsOf(n), waterWorlds: true });
       }
+    }
+  });
+
+  // 2026-11-04 (the owner's answer after S5.BAR, «1 А»): in a world at the water lingerie is drawn only indoors, never on her balcony (there a balcony over the water); a dry world keeps it.
+  test("in a world at the water every «rooms» scene is indoors on the mock and the engine; a dry world reaches her balcony on both", async () => {
+    const m = mockOf();
+    const indoor = (location: string | undefined): boolean => CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.name === location)?.room === true;
+    const cityPools = { ...POOLS, [CITY]: poolOf(CITY_POOL) };
+    let mockBalconies = 0;
+    let engineBalconies = 0;
+    for (const avatar of [MIA, STUDIO]) {
+      for (const n of [5, 12, 30]) {
+        const rooms = (await composed(m, avatar, n, [TRIP])).scenes.filter((s) => branchOf({ location: s.place?.location }) === "rooms");
+        expect({ avatar: avatar.name, n, outdoors: rooms.filter((s) => !indoor(s.place?.location)).map((s) => s.place?.location) }).toEqual({ avatar: avatar.name, n, outdoors: [] });
+        mockBalconies += (await composed(m, avatar, n, [CITY])).scenes.filter((s) => s.place?.location === "her balcony").length;
+        for (const seed of SEEDS.slice(0, 3)) {
+          const slots = engineCustom(seed, n, avatar.origin === "studio").filter((s) => branchOf({ location: s.location }) === "rooms");
+          expect({ seed, n, outdoors: slots.filter((s) => !indoor(s.location)).map((s) => s.location) }).toEqual({ seed, n, outdoors: [] });
+          engineBalconies += planForAvatar({ seed, count: n, categories: [CITY], level: "bold" }, cityPools, avatar.origin === "studio").slots.filter((s) => s.location === "her balcony").length;
+        }
+      }
+    }
+    expect({ mockBalconies: mockBalconies > 0, engineBalconies: engineBalconies > 0 }).toEqual({ mockBalconies: true, engineBalconies: true });
+  });
+
+  test("«Другая сцена» keeps a «rooms» scene of a world at the water indoors on the mock", async () => {
+    const m = mockOf();
+    const made = await m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 30, categories: [TRIP], level: "bold", acceptedWorstMicros: WORST });
+    expect(made.ok).toBe(true);
+    m.scheduler.runAll();
+    let set = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    if (set === null) throw new Error("no set");
+    const ids = set.scenes.filter((s) => branchOf({ location: s.place?.location }) === "rooms").map((s) => s.sceneId).slice(0, MAX_SCENES_PER_WRITE);
+    expect(ids.length).toBeGreaterThan(0);
+    for (let round = 0; round < 4; round++) {
+      const sent = await m.client.request("scenes.write", { sceneSetId: set.sceneSetId, revision: set.revision, target: { kind: "rewrite", sceneIds: ids, redraw: true }, acceptedWorstMicros: WORST });
+      expect(sent.ok ? "ok" : `${sent.error.code} ${sent.error.detail ?? ""}`).toBe("ok");
+      m.scheduler.runAll();
+      set = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+      if (set === null) throw new Error("no set");
+      const redrawn = set.scenes.filter((s) => ids.includes(s.sceneId));
+      expect({ round, outdoors: redrawn.filter((s) => CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.name === s.place?.location)?.room !== true).map((s) => s.place?.location) }).toEqual({ round, outdoors: [] });
     }
   });
 

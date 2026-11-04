@@ -86,9 +86,28 @@ function builtInBank(ref: SceneCategory, opts: DrawFor): CategoryBank {
   return forOrigin(builtInBankOf(BANK_OF[ref], opts.route), opts.impliedNudity);
 }
 
-/** The shared custom «Смелая» bank of a branch, for the avatar's origin. */
-export function customBoldBank(branch: CustomBoldBranch, impliedNudity: boolean | undefined): CategoryBank {
-  return forOrigin(branch === "rooms" ? CUSTOM_BOLD_BANKS.rooms : CUSTOM_BOLD_BANKS.water, impliedNudity);
+/** The banks already cut to their rooms, so a bank is cut once and the same object comes back. */
+const INDOOR = new WeakMap<CategoryBank, CategoryBank>();
+
+/**
+ * 2026-11-04 (the owner's answer after S5.BAR, «1 А»; the engine's `indoorOnly`, engine/scenes/poolAt.ts): the bank cut to its rooms (`room`), for a custom world at the water, where a
+ * «rooms» frame is drawn only indoors. The mock keeps its deck as it is (its own dealing, never the engine's picks): a card no room takes (the balcony's selfie) falls through to the next one (`drawIn`), and
+ * the cards the rooms take land where they always did, so a Studio-created avatar still reaches the sheet and the towel.
+ */
+export function indoorRooms(bank: CategoryBank): CategoryBank {
+  if (bank.places.every((place) => place.room === true)) return bank;
+  const known = INDOOR.get(bank);
+  if (known !== undefined) return known;
+  const indoor: CategoryBank = { ...bank, places: bank.places.filter((place) => place.room === true) };
+  INDOOR.set(bank, indoor);
+  return indoor;
+}
+
+/** The shared custom «Смелая» bank of a branch, for the avatar's origin. 2026-11-04: in a world at the water (`waterWorld`) «rooms» is its rooms alone. */
+export function customBoldBank(branch: CustomBoldBranch, impliedNudity: boolean | undefined, waterWorld = false): CategoryBank {
+  if (branch === "water") return forOrigin(CUSTOM_BOLD_BANKS.water, impliedNudity);
+  const rooms = forOrigin(CUSTOM_BOLD_BANKS.rooms, impliedNudity);
+  return waterWorld ? indoorRooms(rooms) : rooms;
 }
 
 /**
@@ -102,8 +121,8 @@ export function bankDraw(ref: SceneCategory, k: number, opts: DrawOpts = {}): Ba
 }
 
 /** 5a.4 (S5.BA7, plan s5a4 §5.3): the k-th scene of a custom category at «Смелая», from the shared bank of its branch («rooms» or «by the water»). The world is the caller's. */
-export function customBoldDraw(branch: CustomBoldBranch, k: number, opts: DrawOpts = {}): BankDraw {
-  return drawIn(customBoldBank(branch, opts.impliedNudity), k, opts, `the custom «${branch}» bank`);
+export function customBoldDraw(branch: CustomBoldBranch, k: number, opts: DrawOpts & { waterWorld?: boolean } = {}): BankDraw {
+  return drawIn(customBoldBank(branch, opts.impliedNudity, opts.waterWorld === true), k, opts, `the custom «${branch}» bank`);
 }
 
 function drawIn(bank: CategoryBank, k: number, opts: DrawOpts, what: string): BankDraw {
