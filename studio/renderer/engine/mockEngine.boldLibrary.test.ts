@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { LaunchDraftInput, PhotoSummary } from "../../shared/engine";
 import { makeMock, MIA, scenePhoto, unwrap } from "./mockEngine.testkit";
+import { runWorld, startRun, toDone } from "./mockLaunchRun.testkit";
 
 // 5a.4 (S5.BA5, plan s5a4 r2.2 D2; the minimal mirror the controller allowed outside S5.BA7): the mock's launch takes the library as the engine's does. At «Смелая» only the free
-// photos drawn on the Seedream route are the avatar's free photos (engine/autopilot/planner.ts `poolOf`); below it every free photo of the chosen categories is, as before.
+// photos drawn on the Seedream route are the avatar's free photos (engine/autopilot/planner.ts `poolOf`).
+// 2026-11-04 (the owner's answer after S5.BAR, item 3): below «Смелая» none of them is, as the engine's `poolOf` (`libraryPhotoFitsLevel`): a launch at «Обычная» or «Кокетливая»
+// never takes a photo drawn at «Смелая».
 
 const ROUTED = 4;
 const PLAIN = 8;
@@ -34,8 +37,24 @@ describe("the mock's library of a «Смелая» launch (r2.2 D2)", () => {
     expect(preview.avatars[0]?.free).toBe(ROUTED);
   });
 
+  test("below «Смелая» no photo on the route is free", async () => {
+    for (const level of [undefined, "ordinary", "flirty"] as const) {
+      const preview = (await unwrap(world().client.request("autopilot.estimate", { draft: draft(level) }))).preview;
+      expect({ level, free: preview.avatars[0]?.free }).toEqual({ level, free: PLAIN });
+    }
+  });
 });
 
-// 5a.4 (S5.BA7, plan s5a4 r2.2 D2, §5.11 story 8): the launch itself takes them so. A «Смелая» launch's library video is made of routed photos only, even when the unrouted ones come first
-// in the gallery (the engine's `poolOf` keeps only routed photos for a library pick); below «Смелая» it takes them in the gallery's order, as before.
-
+// The launch itself takes them so (`claimPhotos`, the engine's library pick through `poolOf`): a launch below «Смелая» leaves the routed photos where they are, even when the gallery
+// offers them first.
+describe("the mock's launch below «Смелая» takes no «Смелая» photo (the owner's answer of 2026-11-04)", () => {
+  test("at «Кокетливая» its library video takes only photos off the route, though the gallery offers the routed ones first", async () => {
+    const photos: PhotoSummary[] = [...Array.from({ length: 5 }, (_, i) => scenePhoto(i + 1, { route: "seedream" })), ...Array.from({ length: PLAIN }, (_, i) => scenePhoto(5 + i + 1))];
+    const mock = runWorld({ avatars: [{ ...MIA, photoCount: photos.length, eligibleUnusedCount: photos.length }], photos });
+    const started = await startRun(mock, { videosPerAvatar: 1, mix: { single: 0, collage: 0, slides: 100 }, categories: ["home"], library: true, generate: false, level: "flirty" });
+    expect((await toDone(mock, started.launchId)).status).toBe("done");
+    const used = (await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }))).photos.filter((p) => p.used);
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter((p) => p.route === "seedream").map((p) => p.photoId)).toEqual([]);
+  });
+});

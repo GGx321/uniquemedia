@@ -67,7 +67,7 @@ export interface MockAutopilotWorld {
   usage(avatarId: string): AvatarUsage;
   /**
    * Free scene photos of the avatar in these categories: eligible, in no video, held by no render, not rejected. 5a.4 (S5.BA5, r2.2 D2, the engine's `poolOf`): at «Смелая» only
-   * the photos drawn on the Seedream route.
+   * the photos drawn on the Seedream route; below it (the owner's answer of 2026-11-04) never a «Смелая» frame (`libraryPhotoFitsLevel`).
    */
   freePhotos(avatarId: string, categories: readonly CategoryRef[], level: SceneLevel | undefined): number;
   /** Another job of the avatar's own holds it now. */
@@ -121,7 +121,7 @@ export interface MockAutopilotWorld {
   recordsOf(avatarId: string, videoIds: readonly string[]): ReadonlySet<string> | undefined;
   /** S4.6g: the avatar's «Опубликовано» marks as its log reads (`absent` before the first mark, `unknown` while it is torn). */
   marksOf(avatarId: string): MarksRead;
-  /** The library photos a library video takes: `n` free photos of the avatar in these categories that are not in `taken`, or null when there are not enough. */
+  /** The library photos a library video takes: `n` free photos of the avatar in these categories that are not in `taken` and fit the launch's level, or null when there are not enough. */
   claimPhotos(avatarId: string, categories: readonly CategoryRef[], n: number, taken: ReadonlySet<string>, level: SceneLevel | undefined): string[] | null;
   /** The photos a launch's videos hold are reserved (not free) until their record lands. */
   holdPhotos(photoIds: readonly string[], held: boolean): void;

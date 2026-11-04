@@ -11,6 +11,7 @@ import {
   decodePhotoCursor,
   boldLevelNeeded,
   legsNeedsBuiltIn,
+  libraryPhotoFitsLevel,
   pagePhotoList,
   type ApiKeyStatus,
   type AutoRefresh,
@@ -1081,8 +1082,8 @@ export class MockEngine implements EngineBridge {
         freePhotos: (avatarId, categories, level) =>
           this.photos.filter((p) => {
             const view = this.photoView(p);
-            // 5a.4 (S5.BA5, r2.2 D2): at «Смелая» only the photos drawn on the Seedream route, as the engine's `poolOf`.
-            const onLevel = level !== "bold" || p.route === "seedream";
+            // 5a.4 (S5.BA5, r2.2 D2): at «Смелая» only the photos drawn on the Seedream route; below it (the owner's answer of 2026-11-04) never a «Смелая» frame. The engine's `poolOf` rule.
+            const onLevel = libraryPhotoFitsLevel(level, { category: p.category, route: p.route });
             return p.avatarId === avatarId && categories.some((c) => c === p.category) && onLevel && view.eligible && !view.used && !view.reserved && !view.rejected;
           }).length,
         // The launch's own slice job holds the avatar (the owner's commands meet IN_FLIGHT), but the launch does not wait for itself.
@@ -1123,8 +1124,9 @@ export class MockEngine implements EngineBridge {
         recordsOf: (_avatarId, videoIds) => (this.recordsUnreadable ? undefined : new Set(videoIds.filter((id) => this.videos.some((v) => v.summary.videoId === id)))),
         marksOf: (avatarId) => this.publishedMarksOf(avatarId),
         claimPhotos: (avatarId, categories, n, taken, level) => {
-          // 5a.4 (S5.BA7, r2.2 D2; the engine's `poolOf`): at «Смелая» a library video takes only the photos drawn on the Seedream route, as the plan counted them free.
-          const free = this.photos.filter((p) => p.avatarId === avatarId && categories.some((c) => c === p.category) && (level !== "bold" || p.route === "seedream") && !taken.has(p.photoId) && this.photoUsable(avatarId, p.photoId) && !p.rejected);
+          // 5a.4 (S5.BA7, r2.2 D2; the engine's `poolOf`): at «Смелая» a library video takes only the photos drawn on the Seedream route, and below it (the owner's answer of 2026-11-04)
+          // never a «Смелая» frame, as the plan counted them free.
+          const free = this.photos.filter((p) => p.avatarId === avatarId && categories.some((c) => c === p.category) && libraryPhotoFitsLevel(level, { category: p.category, route: p.route }) && !taken.has(p.photoId) && this.photoUsable(avatarId, p.photoId) && !p.rejected);
           return free.length < n ? null : free.slice(0, n).map((p) => p.photoId);
         },
         holdPhotos: (photoIds, held) => {
