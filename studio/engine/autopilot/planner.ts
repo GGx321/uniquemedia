@@ -1,6 +1,6 @@
 import { hammingDistance } from "../../../src/core/pdq/hamming";
 import type { AvatarBlockerCode, LaunchDraft, VideoShape } from "../../shared/engine/autopilot";
-import { orderCategories, type CategoryPoses, type CategoryRef, type ScenePose, type SceneRoute } from "../../shared/engine/categories";
+import { libraryPhotoFitsLevel, orderCategories, type CategoryPoses, type CategoryRef, type ScenePose, type SceneRoute } from "../../shared/engine/categories";
 import { MAX_COMPOSE_SCENES } from "../../shared/engine/scenes";
 import type { AvatarUsage } from "../../shared/engine/state";
 import { defaultQaConfig } from "../runs/config";
@@ -20,7 +20,7 @@ export interface PlanPhoto {
   faceCos: number | undefined;
   /** S5.7a: the face gate marked the frame, so `faceCos` was kept and never judged: it ranks as unverified. */
   faceMarked?: true;
-  /** 5a.4 (S5.BA5, plan s5a4 r2.2 D2): `source.route` of a photo drawn on the Seedream route; absent for every other photo. A launch at «Смелая» takes only these. */
+  /** 5a.4 (S5.BA5, plan s5a4 r2.2 D2): `source.route` of a photo drawn on the Seedream route; absent for every other photo. A launch at «Смелая» takes only these, a launch below it none of them. */
   route?: SceneRoute;
   eligible: boolean;
   rejected: boolean;
@@ -235,8 +235,9 @@ const NO_PHOTOS: ReadonlySet<string> = new Set();
  * The avatar's FREE library photos in the launch's categories (§5.1): the planner's pool, and, with the launch's own photos marked `reserved`, the candidates of every later pick of the
  * free steps. One definition (A7): eligible, not rejected, not used, not reserved, not held by a saved draft, of the avatar, with a category the launch chose.
  * 5a.4 (S5.BA5, plan s5a4 r2.2 D2): at «Смелая» only the photos drawn on the Seedream route, so a «Смелая» launch never fills a video with an ordinary, a flirty or a pre-5a.4 photo
- * (an old «Смелая» photo of the five, or of nightwear's cotton, has no route). Below «Смелая» the pool is today's. The filter is the LIBRARY's (round 2, money review M-1): `own` are the
- * launch's own photos (the ones its slices brought, a video's own in a re-pick), which always pass it, routed or not: a launch begun before 5a.4 draws on the owner's model.
+ * (an old «Смелая» photo of the five, or of nightwear's cotton, has no route). Below «Смелая» (the owner's answer of 2026-11-04) never a «Смелая» frame, on the route or of a «Смелая»
+ * category: `libraryPhotoFitsLevel`, the one rule the mock reads too. The filter is the LIBRARY's (round 2, money review M-1): `own` are the launch's own photos (the ones its slices
+ * brought, a video's own in a re-pick), which always pass it, routed or not: a launch begun before 5a.4 draws on the owner's model.
  */
 export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" | "draftHeldPhotoIds">, own: ReadonlySet<string> = NO_PHOTOS): PlanPhoto[] {
   if (avatar.usage.state !== "ok" || !avatar.draftsKnown) return [];
@@ -252,7 +253,7 @@ export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" |
         !input.draftHeldPhotoIds.has(p.id) &&
         p.category !== undefined &&
         chosen.has(p.category) &&
-        (input.draft.level !== "bold" || p.route === "seedream" || own.has(p.id)),
+        (own.has(p.id) || libraryPhotoFitsLevel(input.draft.level, { category: p.category, route: p.route })),
     ),
   );
 }

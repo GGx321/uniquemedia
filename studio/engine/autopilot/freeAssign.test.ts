@@ -331,6 +331,29 @@ describe("a launch at «Смелая»: the library takes «Смелая» photo
   });
 });
 
+// 2026-11-04 (the owner's answer after S5.BAR, item 3): a launch at «Обычная» or «Кокетливая» never takes a library photo drawn at «Смелая». The library pick leaves out every
+// «Смелая» frame (`isBoldFrame`); the launch's own photos still pass, as they do at «Смелая».
+describe("a launch below «Смелая»: the library never gives a «Смелая» photo, the launch's own photos always pass", () => {
+  const flirty = { level: "flirty" as const };
+
+  test("assignLibrary takes no photo drawn on the route", () => {
+    const routed = mine(6, { route: "seedream" }, 21);
+    const plain = mine(3, {}, 22);
+    const file = libraryFile([...routed, ...plain], flirty);
+    const picked = outcomeOf(assignLibrary(file, new Map([[A, facts(A, [...routed, ...plain])]]), none)).picks.flatMap((p) => p.photoIds);
+    expect(picked.length).toBeGreaterThan(0);
+    expect(picked.filter((id) => routed.some((p) => p.id === id))).toEqual([]);
+  });
+
+  test("repick keeps a video's own photo on the route while it is still free", () => {
+    const photos = mine(1, { route: "seedream" }, 23);
+    const file = stampedFile({ library: false, generate: true, videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 }, ...flirty });
+    const [video] = videosOf(file);
+    const own = withVideos(file, (v) => ({ ...v, state: "rendering", photoIds: [photos[0]?.id ?? ""] }));
+    expect(repick(own, A, video?.key ?? "", facts(A, photos), none).picks[0]?.photoIds).toEqual([photos[0]?.id ?? ""]);
+  });
+});
+
 describe("takenPhotos", () => {
   test("lists the photos of the videos that hold them, not a dropped video's", () => {
     const photos = mine(3);

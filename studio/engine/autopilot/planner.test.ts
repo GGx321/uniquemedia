@@ -156,8 +156,10 @@ describe("planLaunch: the pool and the shapes", () => {
 });
 
 // 5a.4 (S5.BA5, plan s5a4 r2.2 D2, §5.8): a launch at «Смелая» fills its videos with «Смелая» photos only: the free photos drawn on the Seedream route (`route: "seedream"`). An
-// ordinary or flirty «Дом» photo, and a nightwear photo from before 5a.4 (drawn with no route), are left out at «Смелая». At «Обычная» and «Кокетливая» the pool is today's, byte for
-// byte. The preview's `free`, `fromLibrary` and `toGenerate` read the same pool.
+// ordinary or flirty «Дом» photo, and a nightwear photo from before 5a.4 (drawn with no route), are left out at «Смелая».
+// 2026-11-04 (the owner's answer after S5.BAR, item 3): a launch at «Обычная» or «Кокетливая» (or at no level) never takes a photo drawn at «Смелая». This replaces the test that pinned
+// «below «Смелая» the pool is today's, routed or not»: below «Смелая» the pool is today's WITHOUT the «Смелая» frames (`isBoldFrame`: on the route, or of a «Смелая» category).
+// The preview's `free`, `fromLibrary` and `toGenerate` read the same pool.
 describe("planLaunch: the library at «Смелая» (r2.2 D2)", () => {
   const routed = distinctPhotos(12, { category: "home", route: "seedream" }, 71);
   const plain = distinctPhotos(12, { category: "home" }, 72);
@@ -178,15 +180,19 @@ describe("planLaunch: the library at «Смелая» (r2.2 D2)", () => {
     expect(mia.toGenerate).toBe(18);
   });
 
-  test("at «Кокетливая» and with no level the pool is today's: routed or not, the plan is the one it was", () => {
+  test("below «Смелая» a photo drawn on the route is never free: the plan is the plan of the library without it", () => {
     for (const level of [undefined, "ordinary", "flirty"] as const) {
-      const categories: CategoryRef[] = ["home", "nightwear"];
-      const asked = { categories, ...(level === undefined ? {} : { level }) };
-      const withRoutes = planLaunch(input({ avatars: [avatar(all)], draft: asked }));
-      const withoutRoutes = planLaunch(input({ avatars: [avatar(all.map(({ route: _route, ...p }) => p))], draft: asked }));
-      expect({ level, plan: withRoutes }).toEqual({ level, plan: withoutRoutes });
-      expect(only(withRoutes).free).toBe(all.length);
+      const asked = level === undefined ? {} : { level };
+      const withRouted = planLaunch(input({ avatars: [avatar([...routed, ...plain])], draft: asked }));
+      expect({ level, free: only(withRouted).free }).toEqual({ level, free: plain.length });
+      expect({ level, plan: withRouted }).toEqual({ level, plan: planLaunch(input({ avatars: [avatar(plain)], draft: asked })) });
     }
+  });
+
+  test("below «Смелая» a photo of a «Смелая» category is never free, though it carries no route (a nightwear photo from before 5a.4)", () => {
+    const categories: CategoryRef[] = ["home", "nightwear"];
+    const mia = only(planLaunch(input({ avatars: [avatar([...plain, ...oldNightwear])], draft: { level: "flirty", categories } })));
+    expect(mia.free).toBe(plain.length);
   });
 });
 

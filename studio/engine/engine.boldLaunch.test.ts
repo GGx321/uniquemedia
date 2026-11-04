@@ -220,6 +220,8 @@ describe("a «Смелая» launch of «Дом», priced by its set's routes", 
 
 // 5a.4 (S5.BA5, plan s5a4 r2.2 D2, §5.8): a launch at «Смелая» takes only «Смелая» photos from the library: the free photos drawn on the Seedream route. The preview counts its `free`
 // and its library photos from them; the avatar's ordinary «Дом» photos stay free for a launch below «Смелая».
+// 2026-11-04 (the owner's answer after S5.BAR, item 3): and a launch below «Смелая» never takes a «Смелая» photo. The first test's «at «Кокетливая» every one is» (12) became 8, the
+// photos off the route alone; the preview's library and new photos and its money follow (the last test).
 describe("the library of a «Смелая» launch", () => {
   const FIXTURE_JPEGS = ["render-best-home-1.jpg", "render-median-travel-2.jpg", "render-worst-fitness-3.jpg"].map((name) => join(import.meta.dir, "face", "fixtures", "images", name));
 
@@ -242,16 +244,35 @@ describe("the library of a «Смелая» launch", () => {
     return answer.result.preview.avatars[0]?.free ?? -1;
   }
 
-  test("at «Смелая» only the routed photos are free; at «Кокетливая» every one is", async () => {
+  test("at «Смелая» only the routed photos are free; at «Кокетливая» only the ones off the route are", async () => {
     const avatarId = await kit.seedAvatar(8, "libpool");
     await addRouted(avatarId, 4);
     const started = await kit.boot(network(), fakeRender());
-    expect([await freeOf(started, avatarId, "bold"), await freeOf(started, avatarId, "flirty")]).toEqual([4, 12]);
+    expect([await freeOf(started, avatarId, "bold"), await freeOf(started, avatarId, "flirty")]).toEqual([4, 8]);
   });
 
   test("at «Смелая» an avatar with no routed photo has none free: every photo is drawn anew", async () => {
     const avatarId = await kit.seedAvatar(8, "nolibpool");
     const started = await kit.boot(network(), fakeRender());
     expect([await freeOf(started, avatarId, "bold"), await freeOf(started, avatarId, "flirty")]).toEqual([0, 8]);
+  });
+
+  test("at «Кокетливая» the preview with «Смелая» photos in the library is the one without them: the same library photos, new photos and worst case", async () => {
+    const avatarId = await kit.seedAvatar(8, "flirtypool");
+    // Two slides from 8 free photos: one from the library, one drawn anew; the 4 routed photos would have filled the second from the library.
+    const previewOf = async (started: Awaited<ReturnType<typeof kit.boot>>) => {
+      const answer = ok(await kit.call(started, "autopilot.estimate", { draft: boldDraft(avatarId, { level: "flirty", categories: ["home"], library: true, videosPerAvatar: 2, planSeed: 4_242 }) }));
+      if (answer.type !== "autopilot.estimate") throw new Error("wrong answer");
+      const { preview } = answer.result;
+      const row = preview.avatars[0];
+      return { free: row?.free, fromLibrary: row?.fromLibrary, toGenerate: row?.toGenerate, worstMicros: preview.estimate.worstMicros, expectedMicros: preview.estimate.expectedMicros };
+    };
+    const first = await kit.boot(network(), fakeRender());
+    const without = await previewOf(first);
+    await kit.kill(first);
+    await addRouted(avatarId, 4);
+    const withRouted = await previewOf(await kit.boot(network(), fakeRender()));
+    expect(without.toGenerate).toBeGreaterThan(0);
+    expect(withRouted).toEqual(without);
   });
 });

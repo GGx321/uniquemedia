@@ -192,6 +192,17 @@ export function boldLevelNeeded(request: { categories: readonly string[]; level?
 }
 
 /**
+ * Whether a launch at `level` may take a library photo, by the photo's category and route as its sidecar keeps them. At «Смелая» only a photo drawn on the Seedream route (5a.4, plan
+ * s5a4 r2.2 D2). Below it, and at no level, never a «Смелая» frame (`isBoldFrame`): the owner's answer of 2026-11-04 (after S5.BAR, item 3), so an «Обычная» or «Кокетливая» launch never
+ * fills a video with a photo drawn at «Смелая». That holds for a photo from before 5a.4 too: every photo ever drawn on the route carries it (written since the route's first draw, and a
+ * sidecar is never rewritten), and the other frames of a «Смелая» request before 5a.4 were a «Смелая» category's or were drawn as «Кокетливая». One rule for the engine's planner pool
+ * (`engine/autopilot/planner.ts` `poolOf`) and the mock's library.
+ */
+export function libraryPhotoFitsLevel(level: SceneLevel | undefined, photo: { category: string; route: SceneRoute | undefined }): boolean {
+  return level === "bold" ? photo.route === "seedream" : !isBoldFrame(photo);
+}
+
+/**
  * The order a run draws its categories in: the five built-ins in their
  * canonical order, then the custom ones in the order given (creation order),
  * each once.
