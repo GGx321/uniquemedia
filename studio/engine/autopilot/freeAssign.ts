@@ -77,8 +77,8 @@ const rowOf = (file: LaunchFile, avatarId: string): readonly FileVideo[] => file
 
 /**
  * The candidates for a pick: the avatar's free photos once the launch's own are set aside (and, unless `forGenerated`, the photos of its slices that generated videos are still waiting for).
- * 5a.4 (S5.BA5 round 2, money review M-1): `own` are the launch's own photos among them (the slices' arrivals, a video's own in a re-pick), which a launch at «Смелая» takes routed or not;
- * the route filter is the library's (`poolOf`).
+ * 5a.4 (S5.BA5 round 2, money review M-1): `own` are the launch's own photos among them (the slices' arrivals, a video's own in a re-pick), which a launch takes at any level,
+ * routed or not; the level filter is the library's (`poolOf`).
  */
 function candidates(file: LaunchFile, facts: AvatarFacts, held: ReadonlySet<string>, taken: ReadonlySet<string>, forGenerated = false, own?: ReadonlySet<string>): PlanPhoto[] {
   const set = forGenerated || facts.withheld === undefined ? taken : new Set([...taken, ...facts.withheld]);
