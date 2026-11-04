@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { plan } from "../scenes";
+import { PlanSlotSchema } from "../scenes/schema";
 import { foldRun } from "./journal";
 import { buildSceneRunPlan, RunPlanSchema, type NewSceneRunPlan, type RunPlan } from "./plan";
 import { remainingPlan } from "./remaining";
@@ -102,6 +103,17 @@ describe("the scene-set plan's schema", () => {
   test("round-trips through JSON unchanged", () => {
     const built = buildSceneRunPlan(input());
     expect(RunPlanSchema.parse(JSON.parse(JSON.stringify(built)))).toEqual(built);
+  });
+
+  // 2026-11-04 (plan s5a4 §5.6): the owner's own edit is marked on its slot, and only a slot that carries its sentence may say its sentence is the owner's.
+  test("marks the owner's edited scenes (`ownText`), only beside a sentence, and reads a plan.json without the mark as before", () => {
+    const built = buildSceneRunPlan(input({ scenes: scenes().map((scene) => (scene.sceneId === 3 ? { ...scene, edited: true } : scene)) }));
+    expect(built.scenes.slots.map((s) => ("ownText" in s ? s.ownText : undefined))).toEqual([undefined, true, undefined, undefined]);
+    expect(RunPlanSchema.parse(JSON.parse(JSON.stringify(built)))).toEqual(built);
+    expect(RunPlanSchema.safeParse(json()).success).toBe(true);
+    const drawn = planned[0]!;
+    expect(PlanSlotSchema.safeParse({ ...drawn, sentence: SENTENCE, ownText: true }).success).toBe(true);
+    expect(PlanSlotSchema.safeParse({ ...drawn, ownText: true }).success).toBe(false);
   });
 
   test("refuses a mixed plan: one slot without a sentence", () => {

@@ -148,6 +148,17 @@ describe("runSources", () => {
     expect(runSources(edited).map((s) => s.text)).toContain("Typed by the owner.");
   });
 
+  // 2026-11-04 (plan s5a4 §5.6): the owner's own edit is his on every avatar, so the run must know which planned texts he edited.
+  test("a planned scene the owner edited says so, and no other scene does", () => {
+    const set = setOf(3);
+    const edited = { ...set, scenes: set.scenes.map((s) => (s.sceneId === 2 ? { ...s, text: "Typed by the owner.", edited: true } : s)) };
+    expect(runSources(edited).map((s) => ({ sceneId: s.sceneId, edited: s.edited === true }))).toEqual([
+      { sceneId: 1, edited: false },
+      { sceneId: 2, edited: true },
+      { sceneId: 3, edited: false },
+    ]);
+  });
+
   test("refuses a scene with no text instead of planning it", () => {
     expect(() => runSources(setOf(3, { textless: [2] }))).toThrow();
   });

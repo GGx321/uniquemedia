@@ -95,6 +95,13 @@ export const PlanSlotSchema = z
     // Additive (5a.4, S5.BA1, I5.78): the place a custom category's «Смелая» slot belongs to, one of the category's stored pool places, copied in so a resume or a writer chunk never reads the
     // library. Only a custom slot on the route carries it (the refine below); absent reads as no world.
     world: PoolText.optional(),
+    // Additive (2026-11-04, the owner's answer after S5.BAR, plan s5a4 §5.6): the slot's `sentence` is the owner's own (he edited the set's scene), so a run draws it as he wrote it and never
+    // skips it for a rule of ours. Only beside a `sentence` (the refine below); absent reads as a sentence of ours.
+    ownText: z.literal(true).optional(),
+  })
+  .refine((slot) => slot.ownText === undefined || slot.sentence !== undefined, {
+    message: "only a slot that carries its sentence may say the sentence is the owner's",
+    path: ["ownText"],
   })
   // 5a.4 (S5.BA1, I5.71, I5.73): «Смелая» is every category's, so the Seedream route is any category's slot's: the marker the bold route draws (`isBoldFrame`). A route value other than
   // seedream is refused by `SceneRoute` itself. A slot stored before 5a.4 has no route on the five or a custom category, and parses as it did.

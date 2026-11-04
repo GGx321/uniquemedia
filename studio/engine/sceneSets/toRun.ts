@@ -67,7 +67,8 @@ export function runSources(set: StoredSceneSet): SceneRunSource[] {
     // The switch on `origin` is exhaustive on purpose: a new kind of scene must name its slot here (an own scene's slot is `{ kind: "own", shot, pose }`).
     switch (scene.origin) {
       case "planned":
-        return { sceneId: scene.sceneId, text: scene.text, slot: scene.slot };
+        // 2026-11-04 (§5.6): the owner's own edit is his: the run never skips it for a rule of ours.
+        return { sceneId: scene.sceneId, text: scene.text, slot: scene.slot, ...(scene.edited ? { edited: true } : {}) };
       case "own": {
         // 5a.4 (S5.BA9): an own scene of a «Смелая» set is drawn on the Seedream route, as every «Смелая» frame is.
         const route = ownSceneRouteOf(set.request.level);

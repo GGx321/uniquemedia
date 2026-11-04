@@ -438,7 +438,8 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
 
 /** What a scene of a reviewed set hands the run: its text, and either the slot the planner drew or the shot and pose of an own scene (made by idea). */
 /** 5a.4 (S5.BA9): an own scene of a «Смелая» set says its route (`OwnPlanSlot.route`); absent below «Смелая». */
-export type SceneRunSource = { sceneId: number; text: string; slot: PlanSlot | { kind: "own"; shot: PlanSlot["shot"]; pose: PlanSlot["pose"]; route?: PlanSlot["route"] } };
+/** 2026-11-04 (§5.6): `edited`, a planned scene whose text the owner edited: its slot says so (`ownText`), and a run never skips the owner's own text for a rule of ours. */
+export type SceneRunSource = { sceneId: number; text: string; edited?: boolean; slot: PlanSlot | { kind: "own"; shot: PlanSlot["shot"]; pose: PlanSlot["pose"]; route?: PlanSlot["route"] } };
 
 export interface NewSceneRunPlan {
   runId: string;
@@ -462,12 +463,12 @@ export interface NewSceneRunPlan {
  * `sceneIds`), each with the sentence the set already holds, and no writer chunks: nothing is asked of the writer, so only images are paid.
  */
 export function buildSceneRunPlan(input: NewSceneRunPlan): RunPlan {
-  const slots = input.scenes.map(({ slot, text }, i) => {
+  const slots = input.scenes.map(({ slot, text, edited }, i) => {
     const slotIndex = i + 1;
     const attemptIdBase = `slot-${slotIndex}`;
     if ("kind" in slot) return { kind: "own" as const, slotIndex, category: "own" as const, shot: slot.shot, pose: slot.pose, attemptIdBase, sentence: text, ...(slot.route === undefined ? {} : { route: slot.route }) };
-    const { slotIndex: _drawn, attemptIdBase: _base, sentence: _written, ...place } = slot;
-    return { ...place, slotIndex, attemptIdBase, sentence: text };
+    const { slotIndex: _drawn, attemptIdBase: _base, sentence: _written, ownText: _own, ...place } = slot;
+    return { ...place, slotIndex, attemptIdBase, sentence: text, ...(edited === true ? { ownText: true as const } : {}) };
   });
   const route = runRoute(input.models.imageModel, input.models.imageQuality);
   return RunPlanSchema.parse({
