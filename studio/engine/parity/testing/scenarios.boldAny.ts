@@ -277,7 +277,7 @@ export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    name: "autopilot, «Смелая» everywhere (S5.BA7, story 8): at «Смелая» the library gives only «Смелая» photos; at «Кокетливая» it gives them all",
+    name: "autopilot, «Смелая» everywhere (S5.BA7, story 8): at «Смелая» the library gives only «Смелая» photos; at «Кокетливая» it gives none of them",
     rig: { launch: true },
     async run(t, w, control) {
       await control.musicTracks();
@@ -300,7 +300,10 @@ export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
       const atBold = await freeAt("bold");
       t.note(`at «Смелая» the library's free photos are the routed ones: ${String(atBold.free === routed)}; the plan takes every one of them: ${String(atBold.fromLibrary === atBold.free && atBold.fromLibrary > 0)}`);
       const atFlirty = await freeAt("flirty");
-      t.note(`at «Кокетливая» it gives the photos off the route too: ${String(atFlirty.free > routed)}; the plan takes more than the routed ones: ${String(atFlirty.fromLibrary > routed)}`);
+      // 2026-11-04 (the owner's answer after S5.BAR, item 3; plan s5a4 §7.4 addendum 4): a launch below «Смелая» never takes a photo drawn at «Смелая». The story told «at «Кокетливая» it
+      // gives them all» (the photos off the route too, more than the routed ones); its name and this note now tell that the free photos there are the free ones off the route alone.
+      const freeOffRoute = photos.filter((p) => p.route !== "seedream" && p.eligible === true && p.used === false && p.reserved === false && p.rejected === false).length;
+      t.note(`at «Кокетливая» the library's free photos are the free ones off the route, none on it: ${String(atFlirty.free === freeOffRoute)}; the plan takes from them: ${String(atFlirty.fromLibrary > 0)}`);
     },
   },
   {
